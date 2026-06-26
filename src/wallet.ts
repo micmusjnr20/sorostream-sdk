@@ -1,3 +1,5 @@
+import type { WalletAdapter, Network } from "./types.js";
+import { Keypair, TransactionBuilder } from "@stellar/stellar-sdk";
 import { TransactionBuilder } from "@stellar/stellar-sdk";
 import type { WalletAdapter, Network, MultisigSigner } from "./types.js";
 
@@ -76,6 +78,41 @@ export async function createFreighterAdapter(): Promise<WalletAdapter> {
       });
       if (result.error) throw new Error(result.error.message);
       return result.signedTxXdr;
+    },
+  };
+}
+
+/**
+ * Creates a server-side WalletAdapter that signs directly with a Stellar Keypair.
+ * Suitable for Node.js scripts, backends, and automated payouts.
+ *
+ * @param secretKey - The Stellar secret key (base-32 encoded seed starting with "S").
+ *
+ * @example
+ * ```ts
+ * const adapter = createKeypairAdapter("SAZ...YOUR...SECRET...KEY...");
+ * const client = new SoroStreamClient({ network: "testnet", contractId: "...", walletAdapter: adapter });
+ * ```
+ */
+export function createKeypairAdapter(secretKey: string): WalletAdapter {
+  const keypair = Keypair.fromSecret(secretKey);
+
+  return {
+    async isConnected(): Promise<boolean> {
+      return true;
+    },
+
+    async getPublicKey(): Promise<string> {
+      return keypair.publicKey();
+    },
+
+    async signTransaction(xdr: string, network: Network): Promise<string> {
+      const tx = TransactionBuilder.fromXDR(
+        xdr,
+        NETWORK_PASSPHRASES[network]
+      );
+      tx.sign(keypair);
+      return tx.toEnvelope().toXDR("base64");
     },
   };
 }

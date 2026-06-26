@@ -15,18 +15,36 @@ export {
   calculateFlowRate,
   timeUntilStreamEnd,
   claimableNow,
-  getPayoutSchedule,
+  calculateVestingSchedule,
+  watchClaimable,
+  aggregateStreamsByToken,
+  parseCsvStreamRows,
 } from "./utils.js";
-export type { PayoutSchedulePoint } from "./utils.js";
+export { templates } from "./templates.js";
+export { CircuitBreaker } from "./circuitBreaker.js";
+export type { CircuitState } from "./circuitBreaker.js";
 export type {
   Stream,
   StreamStatus,
+  StreamFilterCriteria,
   CreateStreamParams,
+  CreateStreamsParams,
   WithdrawParams,
   CancelStreamParams,
   TopUpParams,
   Network,
   WalletAdapter,
+  SoroStreamClientOptions,
+  FeeEstimate,
+  VestingSchedulePoint,
+  VestingScheduleResult,
+  WatchClaimableOptions,
+  BulkStreamRow,
+  BulkCreateOptions,
+  BulkCreateBatchResult,
+  BulkCreateResult,
+  BatchWithdrawResult,
+  TokenAggregate,
   MultisigSigner,
   StreamEvent,
   StreamEventType,
@@ -36,3 +54,4 @@ export type {
   PaginatedStreams,
   WebhookConfig,
 } from "./types.js";
+export type { SoroStreamClientOptions } from "./SoroStreamClient.js";
