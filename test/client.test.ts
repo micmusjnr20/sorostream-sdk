@@ -7,6 +7,7 @@ import {
   calculateFlowRate,
   claimableNow,
   timeUntilStreamEnd,
+  filterStreams,
 } from "../src/utils.js";
 
 // ── Utility tests ────────────────────────────────────────────────────────────
@@ -90,6 +91,88 @@ describe("timeUntilStreamEnd", () => {
     const now = Math.floor(Date.now() / 1000);
     const stream = makeStream({ endTime: now + 3600 });
     expect(timeUntilStreamEnd(stream)).toBeGreaterThan(0);
+  });
+});
+
+describe("filterStreams", () => {
+  const streams: Stream[] = [
+    makeStream({
+      id: "1",
+      status: "Active",
+      token: "GUSDC",
+      startTime: 1_000,
+      endTime: 2_000,
+    }),
+    makeStream({
+      id: "2",
+      status: "Completed",
+      token: "GUSDC",
+      startTime: 3_000,
+      endTime: 4_000,
+    }),
+    makeStream({
+      id: "3",
+      status: "Active",
+      token: "GXLM",
+      startTime: 5_000,
+      endTime: 6_000,
+    }),
+    makeStream({
+      id: "4",
+      status: "Cancelled",
+      token: "GXLM",
+      startTime: 7_000,
+      endTime: 8_000,
+    }),
+  ];
+
+  it("returns all streams when no criteria are provided", () => {
+    expect(filterStreams(streams)).toHaveLength(4);
+  });
+
+  it("filters by status", () => {
+    expect(filterStreams(streams, { status: "Active" }).map((s) => s.id)).toEqual([
+      "1",
+      "3",
+    ]);
+  });
+
+  it("filters by multiple statuses", () => {
+    expect(
+      filterStreams(streams, { status: ["Active", "Cancelled"] }).map((s) => s.id)
+    ).toEqual(["1", "3", "4"]);
+  });
+
+  it("filters by token", () => {
+    expect(filterStreams(streams, { token: "GUSDC" }).map((s) => s.id)).toEqual([
+      "1",
+      "2",
+    ]);
+  });
+
+  it("filters by startsAfter", () => {
+    expect(filterStreams(streams, { startsAfter: 4_000 }).map((s) => s.id)).toEqual([
+      "3",
+      "4",
+    ]);
+  });
+
+  it("filters by endsBefore", () => {
+    expect(filterStreams(streams, { endsBefore: 5_000 }).map((s) => s.id)).toEqual([
+      "1",
+      "2",
+    ]);
+  });
+
+  it("combines criteria with logical AND", () => {
+    expect(
+      filterStreams(streams, {
+        status: "Active",
+        token: "GUSDC",
+        startsAfter: 500,
+        endsBefore: 3_000,
+      }).map((s) => s.id)
+    ).toEqual(["1"]);
   });
 });
 

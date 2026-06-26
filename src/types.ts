@@ -64,6 +64,18 @@ export interface TopUpParams {
 /** Network configuration. */
 export type Network = "mainnet" | "testnet" | "futurenet";
 
+/** Client-side filter criteria for {@link filterStreams}. */
+export interface StreamFilterCriteria {
+  /** Match streams with this status (or any of these statuses). */
+  status?: StreamStatus | StreamStatus[];
+  /** Match streams for this SAC token contract address. */
+  token?: string;
+  /** Include streams whose start time is strictly after this unix timestamp. */
+  startsAfter?: number;
+  /** Include streams whose end time is strictly before this unix timestamp. */
+  endsBefore?: number;
+}
+
 /** Wallet adapter interface. */
 export interface WalletAdapter {
   getPublicKey(): Promise<string>;

@@ -6,15 +6,17 @@ export {
   calculateFlowRate,
   timeUntilStreamEnd,
   claimableNow,
+  filterStreams,
 } from "./utils.js";
 export type {
   Stream,
   StreamStatus,
+  StreamFilterCriteria,
   CreateStreamParams,
   WithdrawParams,
   CancelStreamParams,
   TopUpParams,
   Network,
   WalletAdapter,
-  SoroStreamClientOptions,
 } from "./types.js";
+export type { SoroStreamClientOptions } from "./SoroStreamClient.js";

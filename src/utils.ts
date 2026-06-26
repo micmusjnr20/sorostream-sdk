@@ -1,4 +1,4 @@
-import type { Stream } from "./types.js";
+import type { Stream, StreamFilterCriteria, StreamStatus } from "./types.js";
 
 const STROOP_FACTOR = 10_000_000n;
 
@@ -53,4 +53,37 @@ export function claimableNow(stream: Stream): bigint {
   const effectiveNow = Math.min(now, stream.endTime);
   const elapsed = Math.max(0, effectiveNow - stream.lastWithdrawTime);
   return stream.flowRate * BigInt(elapsed);
+}
+
+function matchesStatus(stream: Stream, status: StreamStatus | StreamStatus[]): boolean {
+  const allowed = Array.isArray(status) ? status : [status];
+  return allowed.includes(stream.status);
+}
+
+/**
+ * Filters a list of streams by common dashboard criteria.
+ * All criteria are optional and combined with logical AND.
+ *
+ * @param streams - Streams returned by getStreamsBySender or getStreamsByRecipient.
+ * @param criteria - Optional filters for status, token, and time bounds.
+ */
+export function filterStreams(
+  streams: Stream[],
+  criteria: StreamFilterCriteria = {}
+): Stream[] {
+  return streams.filter((stream) => {
+    if (criteria.status !== undefined && !matchesStatus(stream, criteria.status)) {
+      return false;
+    }
+    if (criteria.token !== undefined && stream.token !== criteria.token) {
+      return false;
+    }
+    if (criteria.startsAfter !== undefined && stream.startTime <= criteria.startsAfter) {
+      return false;
+    }
+    if (criteria.endsBefore !== undefined && stream.endTime >= criteria.endsBefore) {
+      return false;
+    }
+    return true;
+  });
 }
