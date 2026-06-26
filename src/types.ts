@@ -64,6 +64,44 @@ export interface TopUpParams {
 /** Network configuration. */
 export type Network = "mainnet" | "testnet" | "futurenet";
 
+/** Fee estimate returned by prepareTransaction. */
+export interface FeeEstimate {
+  /** Total fee in stroops (base fee + min resource fee). */
+  totalFee: number;
+  /** Soroban resource fee in stroops. */
+  minResourceFee: number;
+}
+
+/** A single milestone point in a vesting schedule. */
+export interface VestingSchedulePoint {
+  /** Unix timestamp of the milestone. */
+  time: number;
+  /** Amount vested in stroops at this point. */
+  vested: bigint;
+}
+
+/** Result of a display-only vesting schedule calculation. */
+export interface VestingScheduleResult {
+  /** Effective claimable amount right now in stroops (0 if still in cliff). */
+  effectiveClaimable: bigint;
+  /** Total amount that vests over the full duration in stroops. */
+  totalAmount: bigint;
+  /** Unix timestamp when the cliff period ends. */
+  cliffEndTime: number;
+  /** Whether we are still in the cliff period. */
+  inCliff: boolean;
+  /** Schedule milestones for UI display (cliff, 25%, 50%, 75%, 100%). */
+  milestones: VestingSchedulePoint[];
+}
+
+/** Options for {@link watchClaimable}. */
+export interface WatchClaimableOptions {
+  /** Interval in ms between interpolation ticks (default: 200). */
+  tickMs?: number;
+  /** Interval in ms between on-chain reconciliations (default: 5000). */
+  reconcileMs?: number;
+}
+
 /** Wallet adapter interface. */
 export interface WalletAdapter {
   getPublicKey(): Promise<string>;

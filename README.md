@@ -50,14 +50,18 @@ await client.withdraw({ streamId });
 
 | Method | Description |
 |--------|-------------|
-| `createStream(params)` | Creates a new payment stream. Returns `{ streamId, txHash }` |
-| `withdraw(params)` | Withdraws all claimable tokens. Returns `{ txHash, amount }` |
-| `cancelStream(params)` | Cancels stream, refunds sender remainder. Returns `{ txHash }` |
-| `topUp(params)` | Adds tokens, extends duration. Returns `{ txHash, newEndTime }` |
+| `createStream(params, signal?)` | Creates a new payment stream. Returns `{ streamId, txHash }` |
+| `withdraw(params, signal?)` | Withdraws all claimable tokens. Returns `{ txHash, amount }` |
+| `cancelStream(params, signal?)` | Cancels stream, refunds sender remainder. Returns `{ txHash }` |
+| `topUp(params, signal?)` | Adds tokens, extends duration. Returns `{ txHash, newEndTime }` |
 | `getStream(streamId)` | Returns full `Stream` object |
 | `getClaimable(streamId)` | Returns claimable amount in stroops |
 | `getStreamsBySender(sender)` | Returns all streams for a sender |
 | `getStreamsByRecipient(recipient)` | Returns all streams for a recipient |
+| `estimateCreateStreamFee(params)` | Estimates network fee for `createStream`. Returns `{ totalFee, minResourceFee }` |
+| `estimateWithdrawFee(params)` | Estimates network fee for `withdraw`. Returns `{ totalFee, minResourceFee }` |
+| `estimateCancelStreamFee(params)` | Estimates network fee for `cancelStream`. Returns `{ totalFee, minResourceFee }` |
+| `estimateTopUpFee(params)` | Estimates network fee for `topUp`. Returns `{ totalFee, minResourceFee }` |
 
 ### Utilities
 
@@ -68,6 +72,20 @@ await client.withdraw({ streamId });
 | `calculateFlowRate(amount, duration)` | Returns stroops/second flow rate |
 | `claimableNow(stream)` | Estimates current claimable (client-side) |
 | `timeUntilStreamEnd(stream)` | Returns seconds until stream ends |
+| `calculateVestingSchedule(stream, cliffSeconds, now?)` | Display-only vesting schedule approximating a cliff. **Not enforced on-chain** |
+| `watchClaimable(stream, reconcile, onTick, options?)` | Live counting-up ticker for claimable balance. Returns unsubscribe function |
+
+### Client Options
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `network` | — | Stellar network (`"mainnet"`, `"testnet"`, `"futurenet"`) |
+| `contractId` | — | Deployed stream contract address |
+| `walletAdapter` | — | Wallet adapter for signing |
+| `rpcUrl?` | Default per network | Custom RPC URL override |
+| `txTimeoutMs?` | `120000` | Max time (ms) to wait for transaction confirmation |
+
+All mutation methods (`createStream`, `withdraw`, `cancelStream`, `topUp`) accept an optional `AbortSignal` as the last argument to cancel in-flight transactions.
 
 ### Wallet
 

@@ -6,6 +6,8 @@ export {
   calculateFlowRate,
   timeUntilStreamEnd,
   claimableNow,
+  calculateVestingSchedule,
+  watchClaimable,
 } from "./utils.js";
 export type {
   Stream,
@@ -17,4 +19,8 @@ export type {
   Network,
   WalletAdapter,
   SoroStreamClientOptions,
+  FeeEstimate,
+  VestingSchedulePoint,
+  VestingScheduleResult,
+  WatchClaimableOptions,
 } from "./types.js";

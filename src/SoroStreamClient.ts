@@ -11,6 +11,7 @@ import {
 import type {
   CancelStreamParams,
   CreateStreamParams,
+  FeeEstimate,
   Network,
   Stream,
   TopUpParams,
@@ -40,6 +41,8 @@ export interface SoroStreamClientOptions {
   walletAdapter: WalletAdapter;
   /** Optional custom RPC URL (overrides default). */
   rpcUrl?: string;
+  /** Maximum time in ms to wait for a transaction to confirm (default: 120000). */
+  txTimeoutMs?: number;
 }
 
 /** Maps a raw Soroban contract value to a Stream object. */
@@ -75,6 +78,7 @@ export class SoroStreamClient {
   private readonly contract: Contract;
   private readonly network: Network;
   private readonly walletAdapter: WalletAdapter;
+  private readonly txTimeoutMs: number;
 
   constructor(options: SoroStreamClientOptions) {
     this.network = options.network;
@@ -83,9 +87,13 @@ export class SoroStreamClient {
     this.server = new rpc.Server(options.rpcUrl ?? RPC_URLS[options.network], {
       allowHttp: false,
     });
+    this.txTimeoutMs = options.txTimeoutMs ?? 120_000;
   }
 
-  private async buildAndSubmit(operation: xdr.Operation): Promise<string> {
+  private async buildAndSubmit(
+    operation: xdr.Operation,
+    signal?: AbortSignal
+  ): Promise<string> {
     const publicKey = await this.walletAdapter.getPublicKey();
     const account = await this.server.getAccount(publicKey);
 
@@ -111,10 +119,27 @@ export class SoroStreamClient {
       throw new Error(`Transaction failed: ${JSON.stringify(result.errorResult)}`);
     }
 
-    // Poll for completion
+    // Poll for completion with configurable timeout and exponential backoff
+    const startTime = Date.now();
+    let delay = 500;
+    const maxDelay = 10_000;
+
     let response = await this.server.getTransaction(result.hash);
     while (response.status === "NOT_FOUND") {
-      await new Promise((r) => setTimeout(r, 1000));
+      if (signal?.aborted) {
+        throw new DOMException("Transaction polling aborted", "AbortError");
+      }
+
+      const elapsed = Date.now() - startTime;
+      if (elapsed >= this.txTimeoutMs) {
+        throw new Error(
+          `Transaction confirmation timed out after ${this.txTimeoutMs}ms`
+        );
+      }
+
+      await new Promise((r) => setTimeout(r, delay));
+      delay = Math.min(delay * 2, maxDelay);
+
       response = await this.server.getTransaction(result.hash);
     }
 
@@ -131,7 +156,8 @@ export class SoroStreamClient {
    * @returns The new stream ID and transaction hash.
    */
   async createStream(
-    params: CreateStreamParams
+    params: CreateStreamParams,
+    signal?: AbortSignal
   ): Promise<{ streamId: string; txHash: string }> {
     if (params.amount <= 0n) throw new Error("Amount must be > 0");
     if (params.durationSeconds <= 0) throw new Error("Duration must be > 0");
@@ -148,7 +174,7 @@ export class SoroStreamClient {
       nativeToScVal(params.autoRenew, { type: "bool" })
     );
 
-    const txHash = await this.buildAndSubmit(operation);
+    const txHash = await this.buildAndSubmit(operation, signal);
 
     // Fetch latest stream for sender to get ID
     const streams = await this.getStreamsBySender(sender);
@@ -163,7 +189,10 @@ export class SoroStreamClient {
    * @param params - Withdraw parameters.
    * @returns The transaction hash and withdrawn amount.
    */
-  async withdraw(params: WithdrawParams): Promise<{ txHash: string; amount: string }> {
+  async withdraw(
+    params: WithdrawParams,
+    signal?: AbortSignal
+  ): Promise<{ txHash: string; amount: string }> {
     const recipient = await this.walletAdapter.getPublicKey();
     const claimable = await this.getClaimable(params.streamId);
 
@@ -173,7 +202,7 @@ export class SoroStreamClient {
       nativeToScVal(recipient, { type: "address" })
     );
 
-    const txHash = await this.buildAndSubmit(operation);
+    const txHash = await this.buildAndSubmit(operation, signal);
     return { txHash, amount: claimable.toString() };
   }
 
@@ -182,7 +211,10 @@ export class SoroStreamClient {
    * @param params - Cancel parameters.
    * @returns The transaction hash.
    */
-  async cancelStream(params: CancelStreamParams): Promise<{ txHash: string }> {
+  async cancelStream(
+    params: CancelStreamParams,
+    signal?: AbortSignal
+  ): Promise<{ txHash: string }> {
     const sender = await this.walletAdapter.getPublicKey();
 
     const operation = this.contract.call(
@@ -191,7 +223,7 @@ export class SoroStreamClient {
       nativeToScVal(sender, { type: "address" })
     );
 
-    const txHash = await this.buildAndSubmit(operation);
+    const txHash = await this.buildAndSubmit(operation, signal);
     return { txHash };
   }
 
@@ -200,7 +232,10 @@ export class SoroStreamClient {
    * @param params - Top-up parameters.
    * @returns The transaction hash and new end time.
    */
-  async topUp(params: TopUpParams): Promise<{ txHash: string; newEndTime: Date }> {
+  async topUp(
+    params: TopUpParams,
+    signal?: AbortSignal
+  ): Promise<{ txHash: string; newEndTime: Date }> {
     if (params.amount <= 0n) throw new Error("Amount must be > 0");
     const sender = await this.walletAdapter.getPublicKey();
 
@@ -211,9 +246,112 @@ export class SoroStreamClient {
       nativeToScVal(params.amount, { type: "i128" })
     );
 
-    const txHash = await this.buildAndSubmit(operation);
+    const txHash = await this.buildAndSubmit(operation, signal);
     const stream = await this.getStream(params.streamId);
     return { txHash, newEndTime: new Date(stream.endTime * 1000) };
+  }
+
+  // ── Fee estimation ──────────────────────────────────────────────────────────
+
+  private async estimateOperationFee(
+    operation: xdr.Operation
+  ): Promise<FeeEstimate> {
+    const publicKey = await this.walletAdapter.getPublicKey();
+    const account = await this.server.getAccount(publicKey);
+
+    const tx = new TransactionBuilder(account, {
+      fee: BASE_FEE,
+      networkPassphrase: NETWORK_PASSPHRASES[this.network],
+    })
+      .addOperation(operation)
+      .setTimeout(30)
+      .build();
+
+    const preparedTx = await this.server.prepareTransaction(tx);
+
+    const minResourceFee = (
+      preparedTx as unknown as { minResourceFee?: number }
+    ).minResourceFee ?? 0;
+
+    return {
+      totalFee: preparedTx.fee + minResourceFee,
+      minResourceFee,
+    };
+  }
+
+  /**
+   * Estimates the network fee for a createStream transaction.
+   * The returned value is an estimate — actual fee may differ.
+   */
+  async estimateCreateStreamFee(
+    params: CreateStreamParams
+  ): Promise<FeeEstimate> {
+    if (params.amount <= 0n) throw new Error("Amount must be > 0");
+    if (params.durationSeconds <= 0) throw new Error("Duration must be > 0");
+
+    const sender = await this.walletAdapter.getPublicKey();
+
+    const operation = this.contract.call(
+      "create_stream",
+      nativeToScVal(sender, { type: "address" }),
+      nativeToScVal(params.recipient, { type: "address" }),
+      nativeToScVal(params.token, { type: "address" }),
+      nativeToScVal(params.amount, { type: "i128" }),
+      nativeToScVal(params.durationSeconds, { type: "u64" }),
+      nativeToScVal(params.autoRenew, { type: "bool" })
+    );
+
+    return this.estimateOperationFee(operation);
+  }
+
+  /**
+   * Estimates the network fee for a withdraw transaction.
+   * The returned value is an estimate — actual fee may differ.
+   */
+  async estimateWithdrawFee(params: WithdrawParams): Promise<FeeEstimate> {
+    const recipient = await this.walletAdapter.getPublicKey();
+
+    const operation = this.contract.call(
+      "withdraw",
+      nativeToScVal(BigInt(params.streamId), { type: "u64" }),
+      nativeToScVal(recipient, { type: "address" })
+    );
+
+    return this.estimateOperationFee(operation);
+  }
+
+  /**
+   * Estimates the network fee for a cancelStream transaction.
+   * The returned value is an estimate — actual fee may differ.
+   */
+  async estimateCancelStreamFee(params: CancelStreamParams): Promise<FeeEstimate> {
+    const sender = await this.walletAdapter.getPublicKey();
+
+    const operation = this.contract.call(
+      "cancel_stream",
+      nativeToScVal(BigInt(params.streamId), { type: "u64" }),
+      nativeToScVal(sender, { type: "address" })
+    );
+
+    return this.estimateOperationFee(operation);
+  }
+
+  /**
+   * Estimates the network fee for a topUp transaction.
+   * The returned value is an estimate — actual fee may differ.
+   */
+  async estimateTopUpFee(params: TopUpParams): Promise<FeeEstimate> {
+    if (params.amount <= 0n) throw new Error("Amount must be > 0");
+    const sender = await this.walletAdapter.getPublicKey();
+
+    const operation = this.contract.call(
+      "top_up",
+      nativeToScVal(BigInt(params.streamId), { type: "u64" }),
+      nativeToScVal(sender, { type: "address" }),
+      nativeToScVal(params.amount, { type: "i128" })
+    );
+
+    return this.estimateOperationFee(operation);
   }
 
   /**
