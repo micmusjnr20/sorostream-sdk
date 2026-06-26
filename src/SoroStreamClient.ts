@@ -62,15 +62,14 @@ export interface SoroStreamClientOptions {
 
 /** Maps a raw Soroban contract value to a Stream object. */
 function scValToStream(val: xdr.ScVal): Stream {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const raw = scValToNative(val) as Record<string, any>;
+  const raw = scValToNative(val) as Record<string, unknown>;
   return {
     id: String(raw["id"]),
     sender: String(raw["sender"]),
     recipient: String(raw["recipient"]),
     token: String(raw["token"]),
-    deposit: BigInt(raw["deposit"]),
-    flowRate: BigInt(raw["flow_rate"]),
+    deposit: BigInt(raw["deposit"] as number),
+    flowRate: BigInt(raw["flow_rate"] as number),
     startTime: Number(raw["start_time"]),
     endTime: Number(raw["end_time"]),
     lastWithdrawTime: Number(raw["last_withdraw_time"]),
@@ -172,8 +171,65 @@ export class SoroStreamClient {
     if (response.status === "FAILED") {
       throw new TransactionFailedError(result.hash);
     }
+  }
 
-    return result.hash;
+  private async buildAndSubmit(operation: xdr.Operation): Promise<string> {
+    const span = this.telemetry.startSpan("sorostream.buildAndSubmit");
+
+    try {
+      const publicKey = await this.walletAdapter.getPublicKey();
+      const account = await this.rpcCall("getAccount", () =>
+        this.server.getAccount(publicKey)
+      );
+
+      const tx = new TransactionBuilder(account, {
+        fee: BASE_FEE,
+        networkPassphrase: NETWORK_PASSPHRASES[this.network],
+      })
+        .addOperation(operation)
+        .setTimeout(30)
+        .build();
+
+      const preparedTx = await this.rpcCall("prepareTransaction", () =>
+        this.server.prepareTransaction(tx)
+      );
+
+      const signedXdr = await this.walletAdapter.signTransaction(
+        preparedTx.toXDR(),
+        this.network
+      );
+
+      const result = await this.rpcCall("sendTransaction", () =>
+        this.server.sendTransaction(
+          TransactionBuilder.fromXDR(signedXdr, NETWORK_PASSPHRASES[this.network])
+        )
+      );
+
+      if (result.status === "ERROR") {
+        throw new Error(`Transaction failed: ${JSON.stringify(result.errorResult)}`);
+      }
+
+      let response = await this.rpcCall("getTransaction", () =>
+        this.server.getTransaction(result.hash)
+      );
+      while (response.status === "NOT_FOUND") {
+        await new Promise((r) => setTimeout(r, 1000));
+        response = await this.rpcCall("getTransaction", () =>
+          this.server.getTransaction(result.hash)
+        );
+      }
+
+      if (response.status === "FAILED") {
+        throw new Error(`Transaction failed: ${result.hash}`);
+      }
+
+      this.telemetry.endSpan(span, { "sorostream.txHash": result.hash });
+      return result.hash;
+    } catch (err) {
+      this.telemetry.recordError(span, err instanceof Error ? err : new Error(String(err)));
+      this.telemetry.endSpan(span);
+      throw err;
+    }
   }
 
   private async buildAndSubmitBatch(operations: xdr.Operation[]): Promise<string> {
