@@ -1,8 +1,18 @@
-import type { Attributes, Span, SpanOptions, Tracer } from "@opentelemetry/api";
+type Attributes = Record<string, string | number | boolean>;
+interface SpanOptions { attributes?: Attributes }
+interface Span {
+  setAttributes(attrs: Attributes): void;
+  end(): void;
+  recordException(e: Error): void;
+  setAttribute(k: string, v: unknown): void;
+}
+interface Tracer { startSpan(name: string, opts?: SpanOptions): Span }
 
-let _otelModule: typeof import("@opentelemetry/api") | null = null;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+let _otelModule: any | null = null;
 
-function getOtel(): typeof import("@opentelemetry/api") | null {
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function getOtel(): any | null {
   if (_otelModule !== undefined) return _otelModule;
   try {
     _otelModule = require("@opentelemetry/api");

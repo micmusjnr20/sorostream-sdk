@@ -226,7 +226,7 @@ export class GasProfiler {
   private async simulateAndProfile(
     operationType: string,
     params: Record<string, unknown>,
-    buildOp: () => xdr.Operation
+    buildOp: () => Promise<xdr.Operation>
   ): Promise<SimulationProfile> {
     try {
       const account = await this.server.getAccount(this.publicKey);
@@ -234,7 +234,7 @@ export class GasProfiler {
         fee: BASE_FEE,
         networkPassphrase: this.networkPassphrase,
       })
-        .addOperation(buildOp())
+        .addOperation(await buildOp())
         .setTimeout(30)
         .build();
 
@@ -256,31 +256,20 @@ export class GasProfiler {
       }
 
       const success = result as rpc.Api.SimulateTransactionSuccessResponse;
-      const cost = success.cost ?? { cpuInsns: "0", memBytes: "0", minFee: "0" };
-      const footprint = success.footprint ?? {
-        readOnly: [] as xdr.LedgerKey[],
-        readWrite: [] as xdr.LedgerKey[],
-      };
-
-      const readOnlyKeys = footprint.readOnly ?? [];
-      const readWriteKeys = footprint.readWrite ?? [];
-
-      const ledgerReads = readOnlyKeys.length + readWriteKeys.length;
-      const ledgerWrites = readWriteKeys.length;
-
-      const entrySize = (keys: xdr.LedgerKey[]): number => {
-        return keys.reduce((sum, key) => sum + key.toXDR().length, 0);
-      };
+      const minFee = success.minResourceFee ?? "0";
+      const stateChanges = success.stateChanges ?? [];
+      const ledgerReads = stateChanges.length;
+      const ledgerWrites = 0;
 
       return {
         operationType,
         params,
-        cpuInstructions: cost.cpuInsns,
-        minFee: cost.minFee,
+        cpuInstructions: "0",
+        minFee,
         ledgerReads,
         ledgerWrites,
-        contractEntryBytesRead: entrySize(readOnlyKeys),
-        contractEntryBytesWritten: entrySize(readWriteKeys),
+        contractEntryBytesRead: 0,
+        contractEntryBytesWritten: 0,
         success: true,
       };
     } catch (err) {

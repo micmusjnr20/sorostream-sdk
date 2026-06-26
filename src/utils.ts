@@ -1,6 +1,8 @@
 import type {
   PriceFeedAdapter,
   Stream,
+  BulkStreamRow,
+  TokenAggregate,
   VestingScheduleResult,
   WatchClaimableOptions,
   BulkStreamRow,
@@ -155,7 +157,7 @@ export function calculateVestingSchedule(
       Math.min(currentTime, stream.endTime) -
       Math.max(cliffEndTime, stream.startTime);
     effectiveClaimable = stream.flowRate * BigInt(Math.max(0, elapsed));
-    if (effectiveClaimable > totalAmount) effectiveClaimable = totalAmount;
+    if (currentTime >= stream.endTime) effectiveClaimable = totalAmount;
   }
 
   const milestones: Array<{ time: number; vested: bigint }> = [];
@@ -336,8 +338,8 @@ export function parseCsvStreamRows(csv: string): BulkStreamRow[] {
     const recipient = fields[recipientIdx];
     if (!recipient) throw new Error(`Row ${i + 1}: missing recipient`);
 
-    const amount = BigInt(fields[amountIdx]!);
-    const durationSeconds = Number(fields[durationIdx]);
+    const amount = BigInt(fields[amountIdx] ?? "0");
+    const durationSeconds = Number(fields[durationIdx] ?? "0");
 
     if (!Number.isFinite(durationSeconds) || durationSeconds <= 0) {
       throw new Error(`Row ${i + 1}: invalid durationSeconds`);

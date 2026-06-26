@@ -17,7 +17,6 @@ import type {
   BulkCreateResult,
   CancelStreamParams,
   CreateStreamParams,
-  FeeBumpOptions,
   FeeEstimate,
   Network,
   PaginatedStreams,
@@ -30,24 +29,10 @@ import type {
   TopUpParams,
   WalletAdapter,
   WithdrawParams,
-  WriteOptions,
-  ContractVersion,
 } from "./types.js";
 import { CircuitBreaker } from "./circuitBreaker.js";
 import type { CircuitBreakerOptions } from "./circuitBreaker.js";
-import {
-  createContractEncoder,
-  type ContractCallEncoder,
-} from "./contractEncoders.js";
-import {
-  InsufficientAmountError,
-  StreamNotFoundError,
-  TransactionFailedError,
-  InvalidAddressError,
-  AccountNotFoundError,
-  InsufficientBalanceError,
-} from "./errors.js";
-import { isValidStellarAddress } from "./utils.js";
+import { InsufficientAmountError, TransactionFailedError, StreamNotFoundError } from "./errors.js";
 
 const RPC_URLS: Record<Network, string> = {
   mainnet: "https://soroban.stellar.org",
@@ -121,10 +106,7 @@ export class SoroStreamClient {
   private readonly network: Network;
   private readonly walletAdapter: WalletAdapter;
   private readonly txTimeoutMs: number;
-  private readonly breaker: CircuitBreaker | null;
-  private readonly encoder: ContractCallEncoder;
-  private readonly priceFeed: PriceFeedAdapter | null;
-  private readonly defaultFeeBump: FeeBumpOptions | null;
+  private readonly breaker: CircuitBreaker;
   private eventPoller: EventPoller | null = null;
 
   constructor(options: SoroStreamClientOptions) {
@@ -136,37 +118,17 @@ export class SoroStreamClient {
       { allowHttp: false }
     );
     this.txTimeoutMs = options.txTimeoutMs ?? 120_000;
-    this.breaker = options.circuitBreaker
-      ? new CircuitBreaker(options.circuitBreaker)
-      : null;
-    this.encoder = createContractEncoder(
-      this.contract,
-      options.contractVersion ?? "v1"
-    );
-    this.priceFeed = options.priceFeed ?? null;
-    this.defaultFeeBump = options.feeBump ?? null;
+    this.breaker = new CircuitBreaker(options.circuitBreaker);
   }
 
-  // ── Internal helpers ──────────────────────────────────────────────────────
-
-  private async withBreaker<T>(fn: () => Promise<T>): Promise<T> {
-    if (this.breaker) return this.breaker.call(fn);
-    return fn();
+  private withBreaker<T>(fn: () => Promise<T>): Promise<T> {
+    return this.breaker.call(fn);
   }
 
-  private resolveFeeBump(override?: FeeBumpOptions): FeeBumpOptions | undefined {
-    return override ?? this.defaultFeeBump ?? undefined;
-  }
 
-  private async buildAndSubmit(
-    operation: xdr.Operation,
-    signal?: AbortSignal,
-    feeBump?: FeeBumpOptions
-  ): Promise<string> {
+  private async buildAndSubmitBatch(operations: xdr.Operation[]): Promise<string> {
     const publicKey = await this.walletAdapter.getPublicKey();
-    const account = await this.withBreaker(() =>
-      this.server.getAccount(publicKey)
-    );
+    const account = await this.server.getAccount(publicKey);
 
     const tx = new TransactionBuilder(account, {
       fee: BASE_FEE,
@@ -176,51 +138,52 @@ export class SoroStreamClient {
       .setTimeout(30)
       .build();
 
-    const preparedTx = await this.withBreaker(() =>
-      this.server.prepareTransaction(tx)
+    const preparedTx = await this.server.prepareTransaction(tx);
+    const signedXdr = await this.walletAdapter.signTransaction(
+      preparedTx.toXDR(),
+      this.network
     );
 
-    let txToSubmit: Transaction | FeeBumpTransaction;
+    const result = await this.server.sendTransaction(
+      TransactionBuilder.fromXDR(signedXdr, NETWORK_PASSPHRASES[this.network])
+    );
 
-    if (feeBump) {
-      const signedXdr = await this.walletAdapter.signTransaction(
-        preparedTx.toXDR(),
-        this.network
-      );
-      const signedInner = TransactionBuilder.fromXDR(
-        signedXdr,
-        NETWORK_PASSPHRASES[this.network]
-      );
-
-      const feeBumpTx = TransactionBuilder.buildFeeBumpTransaction(
-        feeBump.sponsorAddress,
-        String(feeBump.maxFee ?? BASE_FEE),
-        signedInner as Transaction,
-        NETWORK_PASSPHRASES[this.network]
-      );
-
-      const signedFeeBumpXdr = await feeBump.sponsorAdapter.signTransaction(
-        feeBumpTx.toXDR(),
-        this.network
-      );
-
-      txToSubmit = TransactionBuilder.fromXDR(
-        signedFeeBumpXdr,
-        NETWORK_PASSPHRASES[this.network]
-      );
-    } else {
-      const signedXdr = await this.walletAdapter.signTransaction(
-        preparedTx.toXDR(),
-        this.network
-      );
-      txToSubmit = TransactionBuilder.fromXDR(
-        signedXdr,
-        NETWORK_PASSPHRASES[this.network]
-      );
+    if (result.status === "ERROR") {
+      throw new Error(`Transaction failed: ${JSON.stringify(result.errorResult)}`);
     }
 
+    let response = await this.server.getTransaction(result.hash);
+    while (response.status === "NOT_FOUND") {
+      await new Promise((r) => setTimeout(r, 1000));
+      response = await this.server.getTransaction(result.hash);
+    }
+
+    if (response.status === "FAILED") {
+      throw new Error(`Transaction failed: ${result.hash}`);
+    }
+
+    return result.hash;
+  }
+
+  private async buildAndSubmit(operation: xdr.Operation, signal?: AbortSignal): Promise<string> {
+    const publicKey = await this.walletAdapter.getPublicKey();
+    const account = await this.withBreaker(() => this.server.getAccount(publicKey));
+
+    const tx = new TransactionBuilder(account, {
+      fee: BASE_FEE,
+      networkPassphrase: NETWORK_PASSPHRASES[this.network],
+    })
+      .addOperation(operation)
+      .setTimeout(30)
+      .build();
+
+    const preparedTx = await this.withBreaker(() => this.server.prepareTransaction(tx));
+    const signedXdr = await this.walletAdapter.signTransaction(preparedTx.toXDR(), this.network);
+
     const result = await this.withBreaker(() =>
-      this.server.sendTransaction(txToSubmit as Transaction)
+      this.server.sendTransaction(
+        TransactionBuilder.fromXDR(signedXdr, NETWORK_PASSPHRASES[this.network])
+      )
     );
 
     if (result.status === "ERROR") {
@@ -229,125 +192,18 @@ export class SoroStreamClient {
 
     const startTime = Date.now();
     let delay = 500;
-    const maxDelay = 10_000;
-
-    let response = await this.withBreaker(() =>
-      this.server.getTransaction(result.hash)
-    );
+    let response = await this.withBreaker(() => this.server.getTransaction(result.hash));
     while (response.status === "NOT_FOUND") {
-      if (signal?.aborted) {
-        throw new DOMException("Transaction polling aborted", "AbortError");
+      if (signal?.aborted) throw new DOMException("Transaction polling aborted", "AbortError");
+      if (Date.now() - startTime >= this.txTimeoutMs) {
+        throw new Error(`Transaction confirmation timed out after ${this.txTimeoutMs}ms`);
       }
-
-      const elapsed = Date.now() - startTime;
-      if (elapsed >= this.txTimeoutMs) {
-        throw new Error(
-          `Transaction confirmation timed out after ${this.txTimeoutMs}ms`
-        );
-      }
-
       await new Promise((r) => setTimeout(r, delay));
-      delay = Math.min(delay * 2, maxDelay);
-
-      response = await this.withBreaker(() =>
-        this.server.getTransaction(result.hash)
-      );
+      delay = Math.min(delay * 2, 10_000);
+      response = await this.withBreaker(() => this.server.getTransaction(result.hash));
     }
 
-    if (response.status === "FAILED") {
-      throw new TransactionFailedError(result.hash);
-    }
-
-    return result.hash;
-  }
-
-  private async buildAndSubmitBatch(
-    operations: xdr.Operation[],
-    signal?: AbortSignal,
-    feeBump?: FeeBumpOptions
-  ): Promise<string> {
-    const publicKey = await this.walletAdapter.getPublicKey();
-    const account = await this.withBreaker(() =>
-      this.server.getAccount(publicKey)
-    );
-
-    let builder = new TransactionBuilder(account, {
-      fee: BASE_FEE,
-      networkPassphrase: NETWORK_PASSPHRASES[this.network],
-    });
-    for (const op of operations) {
-      builder = builder.addOperation(op);
-    }
-    const tx = builder.setTimeout(30).build();
-
-    const preparedTx = await this.withBreaker(() =>
-      this.server.prepareTransaction(tx)
-    );
-
-    let txToSubmit: Transaction | FeeBumpTransaction;
-
-    if (feeBump) {
-      const signedXdr = await this.walletAdapter.signTransaction(
-        preparedTx.toXDR(),
-        this.network
-      );
-      const signedInner = TransactionBuilder.fromXDR(
-        signedXdr,
-        NETWORK_PASSPHRASES[this.network]
-      );
-
-      const feeBumpTx = TransactionBuilder.buildFeeBumpTransaction(
-        feeBump.sponsorAddress,
-        String(feeBump.maxFee ?? BASE_FEE),
-        signedInner as Transaction,
-        NETWORK_PASSPHRASES[this.network]
-      );
-
-      const signedFeeBumpXdr = await feeBump.sponsorAdapter.signTransaction(
-        feeBumpTx.toXDR(),
-        this.network
-      );
-
-      txToSubmit = TransactionBuilder.fromXDR(
-        signedFeeBumpXdr,
-        NETWORK_PASSPHRASES[this.network]
-      );
-    } else {
-      const signedXdr = await this.walletAdapter.signTransaction(
-        preparedTx.toXDR(),
-        this.network
-      );
-      txToSubmit = TransactionBuilder.fromXDR(
-        signedXdr,
-        NETWORK_PASSPHRASES[this.network]
-      );
-    }
-
-    const result = await this.withBreaker(() =>
-      this.server.sendTransaction(txToSubmit as Transaction)
-    );
-
-    if (result.status === "ERROR") {
-      throw new TransactionFailedError(JSON.stringify(result.errorResult));
-    }
-
-    let response = await this.withBreaker(() =>
-      this.server.getTransaction(result.hash)
-    );
-    while (response.status === "NOT_FOUND") {
-      if (signal?.aborted) {
-        throw new DOMException("Transaction polling aborted", "AbortError");
-      }
-      await new Promise((r) => setTimeout(r, 1000));
-      response = await this.withBreaker(() =>
-        this.server.getTransaction(result.hash)
-      );
-    }
-
-    if (response.status === "FAILED") {
-      throw new TransactionFailedError(result.hash);
-    }
-
+    if (response.status === "FAILED") throw new TransactionFailedError(result.hash);
     return result.hash;
   }
 
@@ -440,7 +296,7 @@ export class SoroStreamClient {
    */
   async createStreams(
     paramsArray: CreateStreamParams[],
-    options?: WriteOptions
+    options?: { simulateOnly?: boolean }
   ): Promise<
     { streamIds: string[]; txHash: string } | SimulateOnlyResult
   > {
@@ -461,13 +317,10 @@ export class SoroStreamClient {
       return { simulated: true, result };
     }
 
-    const before = await this.getStreamsBySender(sender);
-    const feeBump = this.resolveFeeBump(options?.feeBump);
-    const txHash = await this.buildAndSubmitBatch(operations, undefined, feeBump);
-    const after = await this.getStreamsBySender(sender);
-    const beforeArr = Array.isArray(before) ? before : before.streams;
-    const afterArr = Array.isArray(after) ? after : after.streams;
-    const streamIds = afterArr.slice(beforeArr.length).map((s) => s.id);
+    const before = await this.getStreamsBySender(sender) as Stream[];
+    const txHash = await this.buildAndSubmitBatch(operations);
+    const after = await this.getStreamsBySender(sender) as Stream[];
+    const streamIds = after.slice(before.length).map((s) => s.id);
 
     return { streamIds, txHash };
   }
@@ -600,7 +453,7 @@ export class SoroStreamClient {
       ).minResourceFee ?? 0;
 
     return {
-      totalFee: Number(preparedTx.fee) + minResourceFee,
+      totalFee: parseInt(preparedTx.fee, 10) + minResourceFee,
       minResourceFee,
     };
   }
@@ -640,8 +493,6 @@ export class SoroStreamClient {
     );
     return this.estimateOperationFee(operation);
   }
-
-  // ── Events ────────────────────────────────────────────────────────────────
 
   private getEventPoller(): EventPoller {
     if (!this.eventPoller) {
@@ -928,8 +779,8 @@ export class SoroStreamClient {
       const txHash = await this.buildAndSubmitBatch(operations);
 
       const streams = await this.getStreamsBySender(sender);
-      const streamArr = Array.isArray(streams) ? streams : streams.streams;
-      const newStreams = streamArr.slice(-chunk.length);
+      const streamsArr = streams as Stream[];
+      const newStreams = streamsArr.slice(-chunk.length);
       const streamIds = newStreams.map((s) => s.id);
 
       results.push({ txHash, streamIds, rows: chunk });
