@@ -1,13 +1,16 @@
 export { SoroStreamClient } from "./SoroStreamClient.js";
-export type { SoroStreamClientOptions } from "./SoroStreamClient.js";
-
-// Wallet adapters are available at "@sorostream/sdk/wallets" to keep the core
-// bundle free of browser-only @stellar/freighter-api code. The non-browser
-// multisig and claim-delegate adapters are still re-exported here for convenience.
-export { createMultisigAdapter, createClaimDelegateAdapter } from "./wallet.js";
-export type { ClaimDelegateConfig } from "./wallet.js";
+export type { SoroStreamClientOptions, SimulateOnlyResult } from "./SoroStreamClient.js";
 
 export { MockSoroStreamClient } from "./mock.js";
+
+export {
+  createFreighterAdapter,
+  connectWallet,
+  createMultisigAdapter,
+  createClaimDelegateAdapter,
+  createPasskeyAdapter,
+} from "./wallet.js";
+export type { ClaimDelegateConfig } from "./wallet.js";
 export { WebhookForwarder } from "./webhook.js";
 export {
   toStroops,
@@ -19,10 +22,14 @@ export {
   watchClaimable,
   aggregateStreamsByToken,
   parseCsvStreamRows,
+  detectStreamDrift,
+  watchStreamDrift,
 } from "./utils.js";
 export { templates } from "./templates.js";
 export { CircuitBreaker } from "./circuitBreaker.js";
+export { withRetry } from "./retry.js";
 export type { CircuitState } from "./circuitBreaker.js";
+export type { RetryOptions } from "./retry.js";
 export type {
   Stream,
   StreamStatus,
@@ -34,7 +41,6 @@ export type {
   TopUpParams,
   Network,
   WalletAdapter,
-  SoroStreamClientOptions,
   FeeEstimate,
   VestingSchedulePoint,
   VestingScheduleResult,
@@ -53,5 +59,9 @@ export type {
   PaginationParams,
   PaginatedStreams,
   WebhookConfig,
+  WriteOptions,
+  FormatUSDCOptions,
+  StreamDrift,
+  ReconcileStreamOptions,
+  PasskeyAdapterConfig,
 } from "./types.js";
-export type { SoroStreamClientOptions } from "./SoroStreamClient.js";

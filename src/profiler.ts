@@ -81,7 +81,7 @@ export class GasProfiler {
       amount: params.amount.toString(),
       durationSeconds: params.durationSeconds,
       autoRenew: params.autoRenew,
-    }, async () => {
+    }, () => {
       return this.contract.call(
         "create_stream",
         nativeToScVal(params.sender, { type: "address" }),
@@ -101,7 +101,7 @@ export class GasProfiler {
     return this.simulateAndProfile("withdraw", {
       streamId: params.streamId,
       recipient: params.recipient,
-    }, async () => {
+    }, () => {
       return this.contract.call(
         "withdraw",
         nativeToScVal(BigInt(params.streamId), { type: "u64" }),
@@ -117,7 +117,7 @@ export class GasProfiler {
     return this.simulateAndProfile("cancel_stream", {
       streamId: params.streamId,
       sender: params.sender,
-    }, async () => {
+    }, () => {
       return this.contract.call(
         "cancel_stream",
         nativeToScVal(BigInt(params.streamId), { type: "u64" }),
@@ -135,7 +135,7 @@ export class GasProfiler {
       streamId: params.streamId,
       sender: params.sender,
       amount: params.amount.toString(),
-    }, async () => {
+    }, () => {
       return this.contract.call(
         "top_up",
         nativeToScVal(BigInt(params.streamId), { type: "u64" }),
@@ -146,7 +146,7 @@ export class GasProfiler {
   }
 
   async profileGetStream(streamId: string): Promise<SimulationProfile> {
-    return this.simulateAndProfile("get_stream", { streamId }, async () => {
+    return this.simulateAndProfile("get_stream", { streamId }, () => {
       return this.contract.call(
         "get_stream",
         nativeToScVal(BigInt(streamId), { type: "u64" })
@@ -155,7 +155,7 @@ export class GasProfiler {
   }
 
   async profileGetClaimable(streamId: string): Promise<SimulationProfile> {
-    return this.simulateAndProfile("get_claimable", { streamId }, async () => {
+    return this.simulateAndProfile("get_claimable", { streamId }, () => {
       return this.contract.call(
         "get_claimable",
         nativeToScVal(BigInt(streamId), { type: "u64" })
@@ -164,7 +164,7 @@ export class GasProfiler {
   }
 
   async profileGetStreamsBySender(sender: string): Promise<SimulationProfile> {
-    return this.simulateAndProfile("get_streams_by_sender", { sender }, async () => {
+    return this.simulateAndProfile("get_streams_by_sender", { sender }, () => {
       return this.contract.call(
         "get_streams_by_sender",
         nativeToScVal(sender, { type: "address" })
@@ -173,7 +173,7 @@ export class GasProfiler {
   }
 
   async profileGetStreamsByRecipient(recipient: string): Promise<SimulationProfile> {
-    return this.simulateAndProfile("get_streams_by_recipient", { recipient }, async () => {
+    return this.simulateAndProfile("get_streams_by_recipient", { recipient }, () => {
       return this.contract.call(
         "get_streams_by_recipient",
         nativeToScVal(recipient, { type: "address" })
@@ -256,8 +256,12 @@ export class GasProfiler {
       }
 
       const success = result as rpc.Api.SimulateTransactionSuccessResponse;
-      const cost = success.cost ?? { cpuInsns: "0", memBytes: "0", minFee: "0" };
-      const footprint = success.footprint ?? {
+      // `cost` and `footprint` are not part of the typed interface in SDK v13;
+      // access them defensively via `any` for backwards compatibility.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const raw = success as any;
+      const cost = raw.cost ?? { cpuInsns: "0", memBytes: "0", minFee: success.minResourceFee ?? "0" };
+      const footprint = raw.footprint ?? {
         readOnly: [] as xdr.LedgerKey[],
         readWrite: [] as xdr.LedgerKey[],
       };

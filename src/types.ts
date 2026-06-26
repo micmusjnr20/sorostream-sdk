@@ -1,6 +1,11 @@
 /** Status of a payment stream. */
 export type StreamStatus = "Active" | "Cancelled" | "Completed";
 
+// ── Compat aliases ────────────────────────────────────────────────────────────
+export type WriteOptions = { simulateOnly?: boolean };
+export type CreateStreamsParams = CreateStreamParams;
+export type StreamFilterCriteria = StreamEventFilter;
+
 // ── Event types (#1) ─────────────────────────────────────────────────────────
 
 export type StreamEventType =
@@ -209,4 +214,48 @@ export interface TokenAggregate {
   deposited: bigint;
   claimable: bigint;
   claimedSoFar: bigint;
+}
+
+// ── Issue #44: Locale-aware formatUSDC ───────────────────────────────────────
+
+/** Options for locale-aware {@link formatUSDC} formatting. */
+export interface FormatUSDCOptions {
+  /** BCP 47 locale string (e.g. "en-US", "de-DE"). */
+  locale?: string;
+  /** Maximum decimal digits to display. */
+  maximumFractionDigits?: number;
+  /** Minimum decimal digits to display. */
+  minimumFractionDigits?: number;
+  /** Whether to use grouping separators (e.g. commas in en-US). Default: true. */
+  useGrouping?: boolean;
+}
+
+// ── Issue #47: Cache reconciliation / drift detection ────────────────────────
+
+/** A single field that differs between cached and on-chain stream state. */
+export interface StreamDrift {
+  field: keyof Stream;
+  cached: unknown;
+  onChain: unknown;
+}
+
+/** Options for {@link watchStreamDrift}. */
+export interface ReconcileStreamOptions {
+  /** Interval in ms between on-chain reconciliation checks (default: 30000). */
+  intervalMs?: number;
+}
+
+// ── Issue #46: WebAuthn passkey adapter ─────────────────────────────────────
+
+/** Configuration for a WebAuthn/passkey-based Soroban smart wallet adapter. */
+export interface PasskeyAdapterConfig {
+  /** Deployed smart wallet contract address (becomes the wallet's public key). */
+  contractId: string;
+  /** WebAuthn relying party ID (e.g. "example.com"). */
+  rpId: string;
+  /**
+   * The credential ID of the registered passkey (ArrayBuffer from credential.rawId).
+   * Required — without it the browser may select the wrong passkey silently.
+   */
+  credentialId: ArrayBuffer;
 }

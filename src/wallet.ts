@@ -1,7 +1,5 @@
-import type { WalletAdapter, Network } from "./types.js";
-import { Keypair, TransactionBuilder } from "@stellar/stellar-sdk";
-import { TransactionBuilder } from "@stellar/stellar-sdk";
-import type { WalletAdapter, Network, MultisigSigner } from "./types.js";
+import { Keypair, TransactionBuilder, xdr, hash, nativeToScVal } from "@stellar/stellar-sdk";
+import type { WalletAdapter, Network, MultisigSigner, PasskeyAdapterConfig } from "./types.js";
 
 /**
  * Configuration for a claim-delegation adapter.
@@ -72,8 +70,8 @@ export async function createFreighterAdapter(): Promise<WalletAdapter> {
       return result.address;
     },
 
-    async signTransaction(xdr: string, network: Network): Promise<string> {
-      const result = await freighter.signTransaction(xdr, {
+    async signTransaction(xdrStr: string, network: Network): Promise<string> {
+      const result = await freighter.signTransaction(xdrStr, {
         networkPassphrase: NETWORK_PASSPHRASES[network],
       });
       if (result.error) throw new Error(result.error.message);
@@ -106,9 +104,9 @@ export function createKeypairAdapter(secretKey: string): WalletAdapter {
       return keypair.publicKey();
     },
 
-    async signTransaction(xdr: string, network: Network): Promise<string> {
+    async signTransaction(xdrStr: string, network: Network): Promise<string> {
       const tx = TransactionBuilder.fromXDR(
-        xdr,
+        xdrStr,
         NETWORK_PASSPHRASES[network]
       );
       tx.sign(keypair);
@@ -206,7 +204,7 @@ export async function createMultisigAdapter(config: {
       return config.address;
     },
 
-    async signTransaction(xdr: string, network: Network): Promise<string> {
+    async signTransaction(xdrStr: string, network: Network): Promise<string> {
       const passphrase = NETWORK_PASSPHRASES[network];
 
       let combined: ReturnType<typeof TransactionBuilder.fromXDR> | null = null;
@@ -216,7 +214,7 @@ export async function createMultisigAdapter(config: {
       for (const signer of config.signers) {
         if (collected >= threshold) break;
 
-        const signedXdr = await signer.signTransaction(xdr, network);
+        const signedXdr = await signer.signTransaction(xdrStr, network);
         const tx = TransactionBuilder.fromXDR(signedXdr, passphrase);
 
         for (const sig of tx.signatures) {
@@ -224,7 +222,7 @@ export async function createMultisigAdapter(config: {
           if (!seen.has(key)) {
             seen.add(key);
             if (!combined) {
-              combined = TransactionBuilder.fromXDR(xdr, passphrase);
+              combined = TransactionBuilder.fromXDR(xdrStr, passphrase);
             }
             combined.signatures.push(sig);
             collected++;
@@ -237,6 +235,176 @@ export async function createMultisigAdapter(config: {
       }
 
       return combined.toEnvelope().toXDR("base64");
+    },
+  };
+}
+
+// ── Issue #46: WebAuthn passkey adapter ──────────────────────────────────────
+
+/**
+ * Converts a DER-encoded P-256 ECDSA signature to compact (r || s) form.
+ * DER format: 0x30 <total-len> 0x02 <r-len> <r> 0x02 <s-len> <s>
+ */
+function derToCompact(der: Uint8Array): Uint8Array {
+  let offset = 0;
+  if (der[offset++] !== 0x30) throw new Error("Invalid DER signature: expected 0x30");
+  offset++; // skip total length byte
+  if (der[offset++] !== 0x02) throw new Error("Invalid DER signature: expected 0x02 for r");
+  const rLen = der[offset++];
+  if (rLen === undefined) throw new Error("Invalid DER signature: truncated r length");
+  const r = der.slice(offset, offset + rLen);
+  offset += rLen;
+  if (der[offset++] !== 0x02) throw new Error("Invalid DER signature: expected 0x02 for s");
+  const sLen = der[offset++];
+  if (sLen === undefined) throw new Error("Invalid DER signature: truncated s length");
+  const s = der.slice(offset, offset + sLen);
+
+  const compact = new Uint8Array(64);
+  // r and s may have a leading 0x00 padding byte; trim and right-align to 32 bytes
+  const rBytes = r[0] === 0 ? r.slice(1) : r;
+  const sBytes = s[0] === 0 ? s.slice(1) : s;
+  compact.set(rBytes, 32 - rBytes.length);
+  compact.set(sBytes, 64 - sBytes.length);
+  return compact;
+}
+
+/**
+ * Creates a WalletAdapter for a Soroban smart-wallet contract that is
+ * authenticated via WebAuthn/passkeys rather than a classic Ed25519 keypair.
+ *
+ * The adapter signs each `invokeHostFunction` auth entry by:
+ *  1. Computing the Soroban contract-auth signing challenge (SHA-256 of the
+ *     `HashIdPreimageSorobanAuthorization` XDR).
+ *  2. Requesting a WebAuthn assertion from the registered passkey.
+ *  3. Attaching the response (`authenticator_data`, `client_data_json`,
+ *     compact `signature`) as a ScVal map in the auth entry credentials.
+ *
+ * This follows the Soroban Passkey Kit signature format expected by the
+ * `__check_auth` function on standard Soroban smart wallet contracts.
+ *
+ * **Requirements:** Must be called in a browser environment with WebAuthn
+ * support. The contract must already be deployed.
+ *
+ * @param config - Passkey adapter configuration.
+ *
+ * @example
+ * ```ts
+ * const adapter = await createPasskeyAdapter({
+ *   contractId: "CA...",
+ *   rpId: "myapp.example.com",
+ *   credentialId: myCredentialIdArrayBuffer,
+ * });
+ * const client = new SoroStreamClient({ network: "testnet", contractId: "...", walletAdapter: adapter });
+ * ```
+ */
+export async function createPasskeyAdapter(
+  config: PasskeyAdapterConfig
+): Promise<WalletAdapter> {
+  if (
+    typeof window === "undefined" ||
+    !("credentials" in navigator) ||
+    !("PublicKeyCredential" in window)
+  ) {
+    throw new Error("WebAuthn is not available in this environment");
+  }
+
+  return {
+    async isConnected(): Promise<boolean> {
+      return (
+        typeof window !== "undefined" &&
+        "credentials" in navigator &&
+        "PublicKeyCredential" in window
+      );
+    },
+
+    async getPublicKey(): Promise<string> {
+      return config.contractId;
+    },
+
+    async signTransaction(xdrStr: string, network: Network): Promise<string> {
+      const passphrase = NETWORK_PASSPHRASES[network];
+
+      // Parse the raw transaction envelope so we can read and mutate auth entries
+      const txEnvelope = xdr.TransactionEnvelope.fromXDR(xdrStr, "base64");
+      const v1Body = txEnvelope.v1().tx();
+      let modified = false;
+
+      for (const op of v1Body.operations()) {
+        const body = op.body();
+        if (body.switch().name !== "invokeHostFunction") continue;
+
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const invokeOp = (body as any).invokeHostFunction() as xdr.InvokeHostFunctionOp;
+        const authArr = invokeOp.auth();
+
+        for (let i = 0; i < authArr.length; i++) {
+          const entry = authArr[i];
+          if (!entry) continue;
+          const creds = entry.credentials();
+          if (creds.switch().name !== "sorobanCredentialsAddress") continue;
+
+          const addrCreds = creds.address();
+
+          // Build the Soroban authorization signing preimage
+          // (ENVELOPE_TYPE_SOROBAN_AUTHORIZATION)
+          const networkId = hash(Buffer.from(passphrase));
+          const preimage = xdr.HashIdPreimage.envelopeTypeSorobanAuthorization(
+            new xdr.HashIdPreimageSorobanAuthorization({
+              networkId,
+              nonce: addrCreds.nonce(),
+              signatureExpirationLedger: addrCreds.signatureExpirationLedger(),
+              invocation: entry.rootInvocation(),
+            })
+          );
+          const challengeHash = hash(preimage.toXDR());
+          // Convert to a plain Uint8Array backed by a fresh ArrayBuffer (required by WebAuthn API)
+          const challenge = Uint8Array.from(challengeHash);
+
+          // Request WebAuthn assertion using the signing challenge
+          const assertion = (await navigator.credentials.get({
+            publicKey: {
+              challenge,
+              rpId: config.rpId,
+              allowCredentials: [
+                { type: "public-key" as const, id: config.credentialId },
+              ],
+              userVerification: "required",
+            },
+          })) as PublicKeyCredential | null;
+
+          if (!assertion) {
+            throw new Error("WebAuthn: authentication was cancelled or failed");
+          }
+
+          const response = assertion.response as AuthenticatorAssertionResponse;
+          const compactSig = derToCompact(new Uint8Array(response.signature));
+
+          // Replace auth entry in-place with the WebAuthn credential.
+          // Signature map format required by Soroban Passkey Kit __check_auth:
+          //   { authenticator_data: Bytes, client_data_json: Bytes, signature: Bytes }
+          authArr[i] = new xdr.SorobanAuthorizationEntry({
+            credentials: xdr.SorobanCredentials.sorobanCredentialsAddress(
+              new xdr.SorobanAddressCredentials({
+                address: addrCreds.address(),
+                nonce: addrCreds.nonce(),
+                signatureExpirationLedger: addrCreds.signatureExpirationLedger(),
+                signature: nativeToScVal({
+                  authenticator_data: Buffer.from(response.authenticatorData),
+                  client_data_json: Buffer.from(response.clientDataJSON),
+                  signature: Buffer.from(compactSig),
+                }),
+              })
+            ),
+            rootInvocation: entry.rootInvocation(),
+          });
+
+          modified = true;
+        }
+      }
+
+      if (!modified) return xdrStr;
+
+      return txEnvelope.toXDR("base64");
     },
   };
 }
