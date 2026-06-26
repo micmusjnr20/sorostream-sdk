@@ -46,3 +46,4 @@ export type {
   PaginatedStreams,
   WebhookConfig,
 } from "./types.js";
+export type { SoroStreamClientOptions } from "./SoroStreamClient.js";

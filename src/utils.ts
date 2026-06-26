@@ -8,23 +8,27 @@ import type { Stream, BulkStreamRow, TokenAggregate } from "./types.js";
 const STROOP_FACTOR = 10_000_000n;
 
 /**
- * Converts a USDC amount (as a decimal string like "100.50") to stroops.
- * @param usdc - USDC amount as a decimal string.
+ * Converts a token amount (as a decimal string like "100.50") to stroops/smallest unit.
+ * @param amount - Amount as a decimal string.
+ * @param decimals - Number of decimal places the token uses (default 7 for SAC).
  */
-export function toStroops(usdc: string): bigint {
-  const [whole = "0", decimal = ""] = usdc.split(".");
-  const paddedDecimal = decimal.padEnd(7, "0").slice(0, 7);
-  return BigInt(whole) * STROOP_FACTOR + BigInt(paddedDecimal);
+export function toStroops(amount: string, decimals: number = 7): bigint {
+  const [whole = "0", decimal = ""] = amount.split(".");
+  const factor = 10n ** BigInt(decimals);
+  const paddedDecimal = decimal.padEnd(decimals, "0").slice(0, decimals);
+  return BigInt(whole) * factor + BigInt(paddedDecimal);
 }
 
 /**
- * Formats a stroop amount to a human-readable USDC string (e.g. "100.5000000").
- * @param stroops - Amount in stroops.
+ * Formats a stroop amount to a human-readable token string (e.g. "100.5000000").
+ * @param stroops - Amount in the smallest token unit.
+ * @param decimals - Number of decimal places the token uses (default 7 for SAC).
  */
-export function formatUSDC(stroops: bigint): string {
-  const whole = stroops / STROOP_FACTOR;
-  const remainder = stroops % STROOP_FACTOR;
-  return `${whole}.${remainder.toString().padStart(7, "0")}`;
+export function formatUSDC(stroops: bigint, decimals: number = 7): string {
+  const factor = 10n ** BigInt(decimals);
+  const whole = stroops / factor;
+  const remainder = stroops % factor;
+  return `${whole}.${remainder.toString().padStart(decimals, "0")}`;
 }
 
 /**
@@ -33,7 +37,7 @@ export function formatUSDC(stroops: bigint): string {
  * @param durationSeconds - Duration in seconds.
  */
 export function calculateFlowRate(amount: bigint, durationSeconds: number): bigint {
-  if (durationSeconds <= 0) throw new Error("Duration must be > 0");
+  if (durationSeconds <= 0) throw new SoroStreamError("Duration must be > 0");
   return amount / BigInt(durationSeconds);
 }
 

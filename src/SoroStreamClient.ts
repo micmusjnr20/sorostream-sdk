@@ -142,7 +142,7 @@ export class SoroStreamClient {
     );
 
     if (result.status === "ERROR") {
-      throw new Error(`Transaction failed: ${JSON.stringify(result.errorResult)}`);
+      throw new TransactionFailedError(JSON.stringify(result.errorResult));
     }
 
     // Poll for completion with configurable timeout and exponential backoff
@@ -170,7 +170,7 @@ export class SoroStreamClient {
     }
 
     if (response.status === "FAILED") {
-      throw new Error(`Transaction failed: ${result.hash}`);
+      throw new TransactionFailedError(result.hash);
     }
 
     return result.hash;
@@ -268,8 +268,8 @@ export class SoroStreamClient {
     params: CreateStreamParams,
     signal?: AbortSignal
   ): Promise<{ streamId: string; txHash: string }> {
-    if (params.amount <= 0n) throw new Error("Amount must be > 0");
-    if (params.durationSeconds <= 0) throw new Error("Duration must be > 0");
+    if (params.amount <= 0n) throw new InsufficientAmountError();
+    if (params.durationSeconds <= 0) throw new InsufficientAmountError("Duration must be > 0");
 
     const sender = await this.walletAdapter.getPublicKey();
 
@@ -289,7 +289,7 @@ export class SoroStreamClient {
     const result = await this.getStreamsBySender(sender);
     const streams = Array.isArray(result) ? result : result.streams;
     const latest = streams[streams.length - 1];
-    if (!latest) throw new Error("Stream not found after creation");
+    if (!latest) throw new StreamNotFoundError("(unknown — post-creation fetch returned empty)");
 
     return { streamId: latest.id, txHash };
   }
@@ -617,7 +617,7 @@ export class SoroStreamClient {
     );
 
     if (rpc.Api.isSimulationError(result)) {
-      throw new Error(`Stream not found: ${streamId}`);
+      throw new StreamNotFoundError(streamId);
     }
 
     const returnVal = (result as rpc.Api.SimulateTransactionSuccessResponse).result?.retval;

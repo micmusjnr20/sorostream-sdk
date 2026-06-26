@@ -13,11 +13,17 @@ import {
   aggregateStreamsByToken,
   parseCsvStreamRows,
 } from "../src/utils.js";
+import {
+  InsufficientAmountError,
+  SoroStreamError,
+} from "../src/errors.js";
+import { NoopLogger } from "../src/logger.js";
+import type { Logger } from "../src/logger.js";
 
 // ── Utility tests ────────────────────────────────────────────────────────────
 
 describe("toStroops", () => {
-  it("converts whole USDC to stroops", () => {
+  it("converts whole USDC to stroops (default 7 decimals)", () => {
     expect(toStroops("100")).toBe(1_000_000_000n);
   });
 
@@ -28,15 +34,30 @@ describe("toStroops", () => {
   it("handles 7 decimal places", () => {
     expect(toStroops("0.0000001")).toBe(1n);
   });
+
+  it("respects custom decimals parameter", () => {
+    expect(toStroops("100", 6)).toBe(100_000_000n);
+    expect(toStroops("1.5", 6)).toBe(1_500_000n);
+    expect(toStroops("0.5", 18)).toBe(500_000_000_000_000_000n);
+  });
 });
 
 describe("formatUSDC", () => {
-  it("formats stroops to USDC string", () => {
+  it("formats stroops to USDC string (default 7 decimals)", () => {
     expect(formatUSDC(1_000_000_000n)).toBe("100.0000000");
   });
 
   it("formats fractional amounts", () => {
     expect(formatUSDC(1n)).toBe("0.0000001");
+  });
+
+  it("formats with no decimal remainder", () => {
+    expect(formatUSDC(100_000_000n, 6)).toBe("100.000000");
+  });
+
+  it("respects custom decimals parameter", () => {
+    expect(formatUSDC(1_500_000n, 6)).toBe("1.500000");
+    expect(formatUSDC(1n, 18)).toBe("0.000000000000000001");
   });
 });
 
@@ -46,8 +67,8 @@ describe("calculateFlowRate", () => {
     expect(calculateFlowRate(1_000_000_000n, 1000)).toBe(1_000_000n);
   });
 
-  it("throws on zero duration", () => {
-    expect(() => calculateFlowRate(100n, 0)).toThrow("Duration must be > 0");
+  it("throws SoroStreamError on zero duration", () => {
+    expect(() => calculateFlowRate(100n, 0)).toThrow(SoroStreamError);
   });
 });
 
@@ -367,7 +388,7 @@ describe("SoroStreamClient input validation", () => {
     });
   });
 
-  it("rejects createStream with zero amount", async () => {
+  it("rejects createStream with zero amount (InsufficientAmountError)", async () => {
     await expect(
       client.createStream({
         recipient: "GABC",
@@ -376,7 +397,7 @@ describe("SoroStreamClient input validation", () => {
         durationSeconds: 1000,
         autoRenew: false,
       })
-    ).rejects.toThrow("Amount must be > 0");
+    ).rejects.toThrow(InsufficientAmountError);
   });
 
   it("rejects createStream with zero duration", async () => {
@@ -391,10 +412,30 @@ describe("SoroStreamClient input validation", () => {
     ).rejects.toThrow("Duration must be > 0");
   });
 
-  it("rejects topUp with zero amount", async () => {
+  it("rejects topUp with zero amount (InsufficientAmountError)", async () => {
     await expect(
       client.topUp({ streamId: "1", amount: 0n })
-    ).rejects.toThrow("Amount must be > 0");
+    ).rejects.toThrow(InsufficientAmountError);
+  });
+});
+
+// ── Typed error tests ────────────────────────────────────────────────────────
+
+describe("typed errors", () => {
+  it("InsufficientAmountError extends SoroStreamError", () => {
+    const err = new InsufficientAmountError();
+    expect(err).toBeInstanceOf(SoroStreamError);
+    expect(err.message).toBe("Amount must be > 0");
+  });
+
+  it("InsufficientAmountError accepts custom message", () => {
+    const err = new InsufficientAmountError("Custom");
+    expect(err.message).toBe("Custom");
+  });
+
+  it("SoroStreamError is a base Error", () => {
+    const err = new SoroStreamError("base");
+    expect(err).toBeInstanceOf(Error);
   });
 });
 
