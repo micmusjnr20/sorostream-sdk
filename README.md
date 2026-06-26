@@ -52,12 +52,18 @@ await client.withdraw({ streamId });
 |--------|-------------|
 | `createStream(params)` | Creates a new payment stream. Returns `{ streamId, txHash }` |
 | `withdraw(params)` | Withdraws all claimable tokens. Returns `{ txHash, amount }` |
+| `batchWithdraw(streamIds, batchSize?)` | Withdraws from multiple streams in one tx. Returns `BatchWithdrawResult[]` |
 | `cancelStream(params)` | Cancels stream, refunds sender remainder. Returns `{ txHash }` |
 | `topUp(params)` | Adds tokens, extends duration. Returns `{ txHash, newEndTime }` |
+| `bulkCreateStreams(rows, options)` | Creates many streams at once (batched). Returns `BulkCreateResult` |
 | `getStream(streamId)` | Returns full `Stream` object |
 | `getClaimable(streamId)` | Returns claimable amount in stroops |
 | `getStreamsBySender(sender)` | Returns all streams for a sender |
 | `getStreamsByRecipient(recipient)` | Returns all streams for a recipient |
+| `estimateCreateStreamFee(params)` | Estimates network fee for `createStream`. Returns `{ totalFee, minResourceFee }` |
+| `estimateWithdrawFee(params)` | Estimates network fee for `withdraw`. Returns `{ totalFee, minResourceFee }` |
+| `estimateCancelStreamFee(params)` | Estimates network fee for `cancelStream`. Returns `{ totalFee, minResourceFee }` |
+| `estimateTopUpFee(params)` | Estimates network fee for `topUp`. Returns `{ totalFee, minResourceFee }` |
 
 ### Utilities
 
@@ -68,13 +74,57 @@ await client.withdraw({ streamId });
 | `calculateFlowRate(amount, duration)` | Returns stroops/second flow rate |
 | `claimableNow(stream)` | Estimates current claimable (client-side) |
 | `timeUntilStreamEnd(stream)` | Returns seconds until stream ends |
+| `calculateVestingSchedule(stream, cliffSeconds, now?)` | Display-only vesting schedule approximating a cliff. **Not enforced on-chain** |
+| `watchClaimable(stream, reconcile, onTick, options?)` | Live counting-up ticker for claimable balance. Returns unsubscribe function |
+
+### Client Options
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `network` | — | Stellar network (`"mainnet"`, `"testnet"`, `"futurenet"`) |
+| `contractId` | — | Deployed stream contract address |
+| `walletAdapter` | — | Wallet adapter for signing |
+| `rpcUrl?` | Default per network | Custom RPC URL override |
+| `txTimeoutMs?` | `120000` | Max time (ms) to wait for transaction confirmation |
+
+All mutation methods (`createStream`, `withdraw`, `cancelStream`, `topUp`) accept an optional `AbortSignal` as the last argument to cancel in-flight transactions.
+| `aggregateStreamsByToken(streams)` | Groups streams by token, returns per-token totals |
+| `parseCsvStreamRows(csv)` | Parses CSV string into `BulkStreamRow[]` |
 
 ### Wallet
 
 | Function | Description |
 |----------|-------------|
 | `createFreighterAdapter()` | Creates a WalletAdapter backed by Freighter extension |
+| `createKeypairAdapter(secretKey)` | Creates a WalletAdapter from a Stellar secret key (server-side) |
 | `connectWallet()` | Prompts Freighter connection, returns public key |
+
+The `WalletAdapter` interface (see `src/types.ts`) is the official extension point for custom signing backends. Implement `getPublicKey`, `signTransaction`, and `isConnected` to support any wallet or signing service.
+
+### Server-side Usage
+
+For backend scripts and automated payouts, use `createKeypairAdapter`:
+
+```typescript
+import { SoroStreamClient, createKeypairAdapter, toStroops } from "@sorostream/sdk";
+
+const adapter = createKeypairAdapter("SAZ...YOUR...SECRET...KEY...");
+const client = new SoroStreamClient({
+  network: "testnet",
+  contractId: "YOUR_CONTRACT_ID",
+  walletAdapter: adapter,
+});
+
+// Bulk-create payroll streams from CSV
+const csv = `recipient,amount,durationSeconds
+GABCD...1,100000000,2592000
+GABCD...2,50000000,604800`;
+const rows = parseCsvStreamRows(csv);
+const { batches } = await client.bulkCreateStreams(rows, {
+  token: "GUSDC_TOKEN_ADDRESS",
+});
+console.log(`Created ${batches.length} batch(es)`);
+```
 
 ## Local Setup
 

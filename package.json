@@ -1,6 +1,11 @@
 {
   "name": "@sorostream/sdk",
   "version": "0.1.0",
+  "private": true,
+  "workspaces": [
+    "packages/react",
+    "packages/cli"
+  ],
   "description": "TypeScript SDK for the SoroStream payment streaming protocol on Stellar Soroban",
   "main": "./dist/index.js",
   "module": "./dist/index.mjs",
@@ -16,7 +21,8 @@
     "build": "tsup src/index.ts --format cjs,esm --dts --clean",
     "test": "vitest run",
     "test:watch": "vitest",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "build:all": "npm run build && npm run build -w packages/react && npm run build -w packages/cli"
   },
   "keywords": ["stellar", "soroban", "streaming", "payments", "usdc", "web3"],
   "license": "MIT",
