@@ -97,6 +97,9 @@ export interface CreateStreamParams {
   autoRenew: boolean;
 }
 
+/** Alias for a bulk stream creation params array. */
+export type CreateStreamsParams = CreateStreamParams[];
+
 /** Parameters for withdrawing from a stream. */
 export interface WithdrawParams {
   /** Stream ID to withdraw from. */
@@ -209,4 +212,60 @@ export interface TokenAggregate {
   deposited: bigint;
   claimable: bigint;
   claimedSoFar: bigint;
+}
+
+// ── Price feed adapter (#Issue 1) ────────────────────────────────────────────
+
+/**
+ * Pluggable adapter for converting token amounts to fiat display values.
+ * Implement this to back formatToken/toFiatDisplay with a price oracle or API.
+ */
+export interface PriceFeedAdapter {
+  /**
+   * Returns the price of one unit of the given token in the display currency.
+   * @param tokenAddress - The token contract address (e.g. SAC address).
+   * @param displayCurrency - Target currency code (default: "usd").
+   * @returns Price per token unit in the display currency.
+   */
+  getPrice(tokenAddress: string, displayCurrency?: string): Promise<number>;
+}
+
+// ── Fee bump types (#Issue 3) ────────────────────────────────────────────────
+
+/**
+ * Options for wrapping a transaction in a Stellar fee-bump.
+ * Allows an app operator to cover network fees on behalf of end users.
+ */
+export interface FeeBumpOptions {
+  /** The Stellar address of the account paying network fees. */
+  sponsorAddress: string;
+  /** Wallet adapter for signing the fee-bump envelope. */
+  sponsorAdapter: WalletAdapter;
+  /** Maximum fee in stroops the sponsor is willing to pay. */
+  maxFee?: number;
+}
+
+// ── Write options ────────────────────────────────────────────────────────────
+
+/** Options for write operations (create, withdraw, cancel, top-up). */
+export interface WriteOptions {
+  /** If true, simulate only without submitting. */
+  simulateOnly?: boolean;
+  /** Override fee-bump for this specific transaction. */
+  feeBump?: FeeBumpOptions;
+}
+
+// ── Contract versioning (#Issue 4) ───────────────────────────────────────────
+
+/** Supported contract versions for call encoding. */
+export type ContractVersion = "v1" | "v2";
+
+// ── Stream filtering ────────────────────────────────────────────────────────
+
+/** Criteria for filtering streams. */
+export interface StreamFilterCriteria {
+  sender?: string;
+  recipient?: string;
+  token?: string;
+  status?: StreamStatus;
 }

@@ -32,3 +32,24 @@ export class TransactionFailedError extends SoroStreamError {
     this.name = "TransactionFailedError";
   }
 }
+
+export class InvalidAddressError extends SoroStreamError {
+  constructor(address: string) {
+    super(`Invalid Stellar address: ${address}`);
+    this.name = "InvalidAddressError";
+  }
+}
+
+export class AccountNotFoundError extends SoroStreamError {
+  constructor(address: string) {
+    super(`Account not found on-chain: ${address}`);
+    this.name = "AccountNotFoundError";
+  }
+}
+
+export class InsufficientBalanceError extends SoroStreamError {
+  constructor(message?: string) {
+    super(message ?? "Insufficient token balance or missing trustline");
+    this.name = "InsufficientBalanceError";
+  }
+}
