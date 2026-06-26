@@ -2,8 +2,10 @@ import type {
   Stream,
   VestingScheduleResult,
   WatchClaimableOptions,
+  BulkStreamRow,
+  TokenAggregate,
 } from "./types.js";
-import type { Stream, BulkStreamRow, TokenAggregate } from "./types.js";
+import { SoroStreamError } from "./errors.js";
 
 /** A single point in a stream's payout forecast. */
 export interface PayoutSchedulePoint {
@@ -97,8 +99,10 @@ export function calculateVestingSchedule(
   let effectiveClaimable: bigint;
   if (inCliff) {
     effectiveClaimable = 0n;
+  } else if (currentTime >= stream.endTime) {
+    effectiveClaimable = totalAmount;
   } else {
-    const elapsed = Math.min(currentTime, stream.endTime) - Math.max(cliffEndTime, stream.startTime);
+    const elapsed = currentTime - cliffEndTime;
     effectiveClaimable = stream.flowRate * BigInt(Math.max(0, elapsed));
     if (effectiveClaimable > totalAmount) effectiveClaimable = totalAmount;
   }
@@ -197,6 +201,9 @@ export function watchClaimable(
     clearInterval(tickTimer);
     clearInterval(reconcileTimer);
   };
+}
+
+/**
  * Groups streams by token address and returns per-token aggregates.
  * Uses the client-side `claimableNow` for claimable estimates.
  *
@@ -254,7 +261,7 @@ export function parseCsvStreamRows(csv: string): BulkStreamRow[] {
   const lines = csv.trim().split(/\r?\n/);
   if (lines.length < 2) throw new Error("CSV must have a header row and at least one data row");
 
-  const header = lines[0].toLowerCase().trim();
+  const header = (lines[0] || "").toLowerCase().trim();
   const cols = header.split(",").map((c) => c.trim());
 
   const recipientIdx = cols.indexOf("recipient");
@@ -268,15 +275,22 @@ export function parseCsvStreamRows(csv: string): BulkStreamRow[] {
   const rows: BulkStreamRow[] = [];
 
   for (let i = 1; i < lines.length; i++) {
-    const line = lines[i].trim();
+    const line = (lines[i] || "").trim();
     if (!line) continue;
     const fields = line.split(",").map((f) => f.trim());
 
     const recipient = fields[recipientIdx];
     if (!recipient) throw new Error(`Row ${i + 1}: missing recipient`);
 
-    const amount = BigInt(fields[amountIdx]);
-    const durationSeconds = Number(fields[durationIdx]);
+    const amountStr = fields[amountIdx];
+    const durationStr = fields[durationIdx];
+
+    if (amountStr === undefined || durationStr === undefined) {
+      throw new Error(`Row ${i + 1}: missing columns`);
+    }
+
+    const amount = BigInt(amountStr);
+    const durationSeconds = Number(durationStr);
 
     if (!Number.isFinite(durationSeconds) || durationSeconds <= 0) {
       throw new Error(`Row ${i + 1}: invalid durationSeconds`);

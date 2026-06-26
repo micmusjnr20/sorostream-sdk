@@ -1,6 +1,4 @@
-import type { WalletAdapter, Network } from "./types.js";
 import { Keypair, TransactionBuilder } from "@stellar/stellar-sdk";
-import { TransactionBuilder } from "@stellar/stellar-sdk";
 import type { WalletAdapter, Network, MultisigSigner } from "./types.js";
 
 /**
@@ -237,6 +235,56 @@ export async function createMultisigAdapter(config: {
       }
 
       return combined.toEnvelope().toXDR("base64");
+    },
+  };
+}
+
+/**
+ * Configuration for the Ledger wallet adapter.
+ */
+export interface LedgerAdapterConfig {
+  /** The Ledger transport instance (e.g. WebHID, WebUSB, NodeHID). */
+  transport: any;
+  /** BIP32 derivation path. Defaults to "44'/148'/0'". */
+  path?: string;
+}
+
+/**
+ * Creates a WalletAdapter backed by a Ledger hardware device using the Stellar Ledger app.
+ *
+ * @param config - The transport and derivation path.
+ */
+export function createLedgerAdapter(config: LedgerAdapterConfig): WalletAdapter {
+  const path = config.path ?? "44'/148'/0'";
+  const StrClass = require("@ledgerhq/hw-app-str").default || require("@ledgerhq/hw-app-str");
+  const str = new StrClass(config.transport);
+  let publicKey: string | null = null;
+
+  return {
+    async isConnected(): Promise<boolean> {
+      try {
+        const pk = await this.getPublicKey();
+        return !!pk;
+      } catch {
+        return false;
+      }
+    },
+
+    async getPublicKey(): Promise<string> {
+      if (publicKey) return publicKey;
+      const result = await str.getPublicKey(path);
+      publicKey = result.publicKey;
+      return result.publicKey;
+    },
+
+    async signTransaction(xdr: string, network: Network): Promise<string> {
+      const passphrase = NETWORK_PASSPHRASES[network];
+      const tx = TransactionBuilder.fromXDR(xdr, passphrase);
+      const txHash = tx.hash();
+      const result = await str.signHash(path, txHash);
+      const pk = await this.getPublicKey();
+      tx.addSignature(pk, result.signature.toString("base64"));
+      return tx.toEnvelope().toXDR("base64");
     },
   };
 }

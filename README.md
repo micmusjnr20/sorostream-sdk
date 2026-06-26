@@ -86,8 +86,13 @@ await client.withdraw({ streamId });
 | `walletAdapter` | — | Wallet adapter for signing |
 | `rpcUrl?` | Default per network | Custom RPC URL override |
 | `txTimeoutMs?` | `120000` | Max time (ms) to wait for transaction confirmation |
+| `checkDuplicate?` | `false` | Heuristic check to warn/block duplicate stream creation |
 
 All mutation methods (`createStream`, `withdraw`, `cancelStream`, `topUp`) accept an optional `AbortSignal` as the last argument to cancel in-flight transactions.
+
+| Method | Description |
+|--------|-------------|
+| `executeBatch(operations)` | Submits multiple operations in a single transaction |
 | `aggregateStreamsByToken(streams)` | Groups streams by token, returns per-token totals |
 | `parseCsvStreamRows(csv)` | Parses CSV string into `BulkStreamRow[]` |
 
@@ -97,9 +102,29 @@ All mutation methods (`createStream`, `withdraw`, `cancelStream`, `topUp`) accep
 |----------|-------------|
 | `createFreighterAdapter()` | Creates a WalletAdapter backed by Freighter extension |
 | `createKeypairAdapter(secretKey)` | Creates a WalletAdapter from a Stellar secret key (server-side) |
+| `createLedgerAdapter({ transport, path? })` | Creates a WalletAdapter backed by a Ledger device |
 | `connectWallet()` | Prompts Freighter connection, returns public key |
 
 The `WalletAdapter` interface (see `src/types.ts`) is the official extension point for custom signing backends. Implement `getPublicKey`, `signTransaction`, and `isConnected` to support any wallet or signing service.
+
+### Deno and Bun Compatibility
+
+The SDK is fully compatible with modern JS/TS runtimes, including **Deno** and **Bun**.
+
+#### Bun Usage
+```bash
+bun install @sorostream/sdk
+```
+You can import the SDK and use it directly in Bun scripts:
+```typescript
+import { SoroStreamClient, createKeypairAdapter } from "@sorostream/sdk";
+```
+
+#### Deno Usage
+You can run/import the SDK directly using NPM imports:
+```typescript
+import { SoroStreamClient, createKeypairAdapter } from "npm:@sorostream/sdk";
+```
 
 ### Server-side Usage
 

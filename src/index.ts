@@ -4,8 +4,8 @@ export type { SoroStreamClientOptions } from "./SoroStreamClient.js";
 // Wallet adapters are available at "@sorostream/sdk/wallets" to keep the core
 // bundle free of browser-only @stellar/freighter-api code. The non-browser
 // multisig and claim-delegate adapters are still re-exported here for convenience.
-export { createMultisigAdapter, createClaimDelegateAdapter } from "./wallet.js";
-export type { ClaimDelegateConfig } from "./wallet.js";
+export { createMultisigAdapter, createClaimDelegateAdapter, createLedgerAdapter } from "./wallet.js";
+export type { ClaimDelegateConfig, LedgerAdapterConfig } from "./wallet.js";
 
 export { MockSoroStreamClient } from "./mock.js";
 export { WebhookForwarder } from "./webhook.js";
@@ -26,15 +26,12 @@ export type { CircuitState } from "./circuitBreaker.js";
 export type {
   Stream,
   StreamStatus,
-  StreamFilterCriteria,
   CreateStreamParams,
-  CreateStreamsParams,
   WithdrawParams,
   CancelStreamParams,
   TopUpParams,
   Network,
   WalletAdapter,
-  SoroStreamClientOptions,
   FeeEstimate,
   VestingSchedulePoint,
   VestingScheduleResult,
@@ -53,5 +50,6 @@ export type {
   PaginationParams,
   PaginatedStreams,
   WebhookConfig,
+  WriteOptions,
 } from "./types.js";
-export type { SoroStreamClientOptions } from "./SoroStreamClient.js";
+export { GasProfiler } from "./profiler.js";

@@ -1,6 +1,7 @@
-import { describe, it, expect, vi, beforeEach, afterEach, useFakeTimers } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { Keypair, nativeToScVal } from "@stellar/stellar-sdk";
 import { SoroStreamClient } from "../src/SoroStreamClient.js";
-import { createKeypairAdapter } from "../src/wallet.js";
+import { createKeypairAdapter, createLedgerAdapter } from "../src/wallet.js";
 import type { Stream, WalletAdapter, BulkStreamRow } from "../src/types.js";
 import {
   toStroops,
@@ -16,9 +17,14 @@ import {
 import {
   InsufficientAmountError,
   SoroStreamError,
+  DuplicateStreamError,
 } from "../src/errors.js";
 import { NoopLogger } from "../src/logger.js";
 import type { Logger } from "../src/logger.js";
+
+const MOCK_SENDER = Keypair.random().publicKey();
+const MOCK_RECIPIENT = Keypair.random().publicKey();
+const MOCK_TOKEN = Keypair.random().publicKey();
 
 // ── Utility tests ────────────────────────────────────────────────────────────
 
@@ -219,7 +225,7 @@ describe("calculateVestingSchedule", () => {
 
 describe("watchClaimable", () => {
   beforeEach(() => {
-    useFakeTimers();
+    vi.useFakeTimers();
   });
 
   afterEach(() => {
@@ -325,7 +331,7 @@ describe("estimate*Fee input validation", () => {
 
   beforeEach(() => {
     mockAdapter = {
-      getPublicKey: vi.fn().mockResolvedValue("GABC123"),
+      getPublicKey: vi.fn().mockResolvedValue(MOCK_SENDER),
       signTransaction: vi.fn().mockResolvedValue("signed_xdr"),
       isConnected: vi.fn().mockResolvedValue(true),
     };
@@ -340,8 +346,8 @@ describe("estimate*Fee input validation", () => {
   it("rejects estimateCreateStreamFee with zero amount", async () => {
     await expect(
       client.estimateCreateStreamFee({
-        recipient: "GABC",
-        token: "GUSDC",
+        recipient: MOCK_RECIPIENT,
+        token: MOCK_TOKEN,
         amount: 0n,
         durationSeconds: 1000,
         autoRenew: false,
@@ -352,8 +358,8 @@ describe("estimate*Fee input validation", () => {
   it("rejects estimateCreateStreamFee with zero duration", async () => {
     await expect(
       client.estimateCreateStreamFee({
-        recipient: "GABC",
-        token: "GUSDC",
+        recipient: MOCK_RECIPIENT,
+        token: MOCK_TOKEN,
         amount: 100n,
         durationSeconds: 0,
         autoRenew: false,
@@ -376,7 +382,7 @@ describe("SoroStreamClient input validation", () => {
 
   beforeEach(() => {
     mockAdapter = {
-      getPublicKey: vi.fn().mockResolvedValue("GABC123"),
+      getPublicKey: vi.fn().mockResolvedValue(MOCK_SENDER),
       signTransaction: vi.fn().mockResolvedValue("signed_xdr"),
       isConnected: vi.fn().mockResolvedValue(true),
     };
@@ -391,8 +397,8 @@ describe("SoroStreamClient input validation", () => {
   it("rejects createStream with zero amount (InsufficientAmountError)", async () => {
     await expect(
       client.createStream({
-        recipient: "GABC",
-        token: "GUSDC",
+        recipient: MOCK_RECIPIENT,
+        token: MOCK_TOKEN,
         amount: 0n,
         durationSeconds: 1000,
         autoRenew: false,
@@ -403,8 +409,8 @@ describe("SoroStreamClient input validation", () => {
   it("rejects createStream with zero duration", async () => {
     await expect(
       client.createStream({
-        recipient: "GABC",
-        token: "GUSDC",
+        recipient: MOCK_RECIPIENT,
+        token: MOCK_TOKEN,
         amount: 100n,
         durationSeconds: 0,
         autoRenew: false,
@@ -444,7 +450,7 @@ describe("typed errors", () => {
 describe("createKeypairAdapter", () => {
   it("returns a connected WalletAdapter", async () => {
     const adapter = createKeypairAdapter(
-      "SA3HUUPJ3WN3Z2T6JQ54Z6BQ2OQ2B6Q2OQ2B6Q2OQ2B6Q2OQ2B6Q2AAAA"
+      Keypair.random().secret()
     );
     expect(await adapter.isConnected()).toBe(true);
     expect(await adapter.getPublicKey()).toBeTruthy();
@@ -567,7 +573,7 @@ describe("SoroStreamClient batchWithdraw", () => {
 
   beforeEach(() => {
     mockAdapter = {
-      getPublicKey: vi.fn().mockResolvedValue("GABC123"),
+      getPublicKey: vi.fn().mockResolvedValue(MOCK_SENDER),
       signTransaction: vi.fn().mockResolvedValue("signed_xdr"),
       isConnected: vi.fn().mockResolvedValue(true),
     };
@@ -578,7 +584,7 @@ describe("SoroStreamClient batchWithdraw", () => {
       walletAdapter: mockAdapter,
     });
 
-    vi.spyOn(client as any, "buildAndSubmitBatch").mockResolvedValue("txhash_batch");
+    vi.spyOn(client, "executeBatch").mockResolvedValue("txhash_batch");
     vi.spyOn(client, "getClaimable").mockResolvedValue(500n);
   });
 
@@ -609,7 +615,7 @@ describe("SoroStreamClient bulkCreateStreams", () => {
 
   beforeEach(() => {
     mockAdapter = {
-      getPublicKey: vi.fn().mockResolvedValue("GABC123"),
+      getPublicKey: vi.fn().mockResolvedValue(MOCK_SENDER),
       signTransaction: vi.fn().mockResolvedValue("signed_xdr"),
       isConnected: vi.fn().mockResolvedValue(true),
     };
@@ -620,7 +626,7 @@ describe("SoroStreamClient bulkCreateStreams", () => {
       walletAdapter: mockAdapter,
     });
 
-    vi.spyOn(client as any, "buildAndSubmitBatch").mockResolvedValue("txhash_bulk");
+    vi.spyOn(client, "executeBatch").mockResolvedValue("txhash_bulk");
   });
 
   it("processes rows and returns batch results", async () => {
@@ -630,12 +636,12 @@ describe("SoroStreamClient bulkCreateStreams", () => {
     ]);
 
     const rows: BulkStreamRow[] = [
-      { recipient: "GA", amount: 100n, durationSeconds: 3600 },
-      { recipient: "GB", amount: 200n, durationSeconds: 7200 },
+      { recipient: MOCK_RECIPIENT, amount: 100n, durationSeconds: 3600 },
+      { recipient: MOCK_RECIPIENT, amount: 200n, durationSeconds: 7200 },
     ];
 
     const result = await client.bulkCreateStreams(rows, {
-      token: "GUSDC",
+      token: MOCK_TOKEN,
       autoRenew: false,
       batchSize: 8,
     });
@@ -649,11 +655,11 @@ describe("SoroStreamClient bulkCreateStreams", () => {
     vi.spyOn(client, "getStreamsBySender").mockResolvedValue([]);
 
     const rows: BulkStreamRow[] = [
-      { recipient: "GA", amount: 100n, durationSeconds: 3600 },
+      { recipient: MOCK_RECIPIENT, amount: 100n, durationSeconds: 3600 },
     ];
 
     const result = await client.bulkCreateStreams(rows, {
-      token: "GUSDC",
+      token: MOCK_TOKEN,
     });
 
     expect(result.batches).toHaveLength(1);
@@ -680,3 +686,83 @@ function makeStream(overrides: Partial<Stream> = {}): Stream {
     ...overrides,
   };
 }
+
+describe("executeBatch", () => {
+  it("submits a batch of operations", async () => {
+    const mockAdapter = {
+      getPublicKey: vi.fn().mockResolvedValue(MOCK_SENDER),
+      signTransaction: vi.fn().mockResolvedValue("signed_xdr"),
+      isConnected: vi.fn().mockResolvedValue(true),
+    };
+    const client = new SoroStreamClient({
+      network: "testnet",
+      contractId: "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
+      walletAdapter: mockAdapter,
+    });
+    vi.spyOn(client, "executeBatch").mockResolvedValue("txhash_batch");
+
+    const op = client["contract"].call("withdraw", nativeToScVal(1n, { type: "u64" }), nativeToScVal(MOCK_RECIPIENT, { type: "address" }));
+    const txHash = await client.executeBatch([op]);
+    expect(txHash).toBe("txhash_batch");
+  });
+});
+
+describe("createStream duplicate check", () => {
+  it("warns or blocks duplicate streams when enabled", async () => {
+    const mockAdapter = {
+      getPublicKey: vi.fn().mockResolvedValue(MOCK_SENDER),
+      signTransaction: vi.fn().mockResolvedValue("signed_xdr"),
+      isConnected: vi.fn().mockResolvedValue(true),
+    };
+    const client = new SoroStreamClient({
+      network: "testnet",
+      contractId: "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
+      walletAdapter: mockAdapter,
+      checkDuplicate: true,
+    });
+
+    const now = Math.floor(Date.now() / 1000);
+    vi.spyOn(client, "getStreamsBySender").mockResolvedValue([
+      makeStream({
+        recipient: MOCK_RECIPIENT,
+        token: MOCK_TOKEN,
+        deposit: 100n,
+        flowRate: 10n,
+        startTime: now - 30,
+        endTime: now + 30,
+        status: "Active",
+      }),
+    ]);
+
+    await expect(
+      client.createStream({
+        recipient: MOCK_RECIPIENT,
+        token: MOCK_TOKEN,
+        amount: 100n,
+        durationSeconds: 60,
+        autoRenew: false,
+      })
+    ).rejects.toThrow(DuplicateStreamError);
+  });
+});
+
+describe("createLedgerAdapter", () => {
+  it("signs transaction hash and returns public key", async () => {
+    const mockTransport = { decorateAppAPIMethods: vi.fn() };
+    const mockSignature = Buffer.from("signature");
+    const mockPublicKey = MOCK_SENDER;
+
+    // mock require("@ledgerhq/hw-app-str")
+    const hwAppStrModule = require("@ledgerhq/hw-app-str");
+    const StrClass = hwAppStrModule.default || hwAppStrModule;
+    vi.spyOn(StrClass.prototype, "getPublicKey").mockResolvedValue({ publicKey: mockPublicKey });
+    vi.spyOn(StrClass.prototype, "signHash").mockResolvedValue({ signature: mockSignature });
+
+    const adapter = createLedgerAdapter({
+      transport: mockTransport,
+    });
+
+    expect(await adapter.isConnected()).toBe(true);
+    expect(await adapter.getPublicKey()).toBe(mockPublicKey);
+  });
+});

@@ -95,6 +95,8 @@ export interface CreateStreamParams {
   durationSeconds: number;
   /** Whether to auto-renew on completion. */
   autoRenew: boolean;
+  /** Opt-in check for duplicate stream creation. */
+  checkDuplicate?: boolean;
 }
 
 /** Parameters for withdrawing from a stream. */
@@ -209,4 +211,8 @@ export interface TokenAggregate {
   deposited: bigint;
   claimable: bigint;
   claimedSoFar: bigint;
+}
+
+export interface WriteOptions {
+  simulateOnly?: boolean;
 }

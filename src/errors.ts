@@ -32,3 +32,10 @@ export class TransactionFailedError extends SoroStreamError {
     this.name = "TransactionFailedError";
   }
 }
+
+export class DuplicateStreamError extends SoroStreamError {
+  constructor(recipient: string, amount: bigint) {
+    super(`Duplicate stream detected: recipient=${recipient}, amount=${amount}`);
+    this.name = "DuplicateStreamError";
+  }
+}

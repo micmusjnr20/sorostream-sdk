@@ -15,5 +15,6 @@ export {
   connectWallet,
   createMultisigAdapter,
   createClaimDelegateAdapter,
+  createLedgerAdapter,
 } from "./wallet.js";
-export type { ClaimDelegateConfig } from "./wallet.js";
+export type { ClaimDelegateConfig, LedgerAdapterConfig } from "./wallet.js";
