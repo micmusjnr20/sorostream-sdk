@@ -13,10 +13,14 @@ export {
   aggregateStreamsByToken,
   parseCsvStreamRows,
 } from "./utils.js";
+export { templates } from "./templates.js";
+export { CircuitBreaker } from "./circuitBreaker.js";
+export type { CircuitState } from "./circuitBreaker.js";
 export type {
   Stream,
   StreamStatus,
   CreateStreamParams,
+  CreateStreamsParams,
   WithdrawParams,
   CancelStreamParams,
   TopUpParams,
