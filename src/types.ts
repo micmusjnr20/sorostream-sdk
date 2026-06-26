@@ -1,6 +1,62 @@
 /** Status of a payment stream. */
 export type StreamStatus = "Active" | "Cancelled" | "Completed";
 
+// ── Event types (#1) ─────────────────────────────────────────────────────────
+
+export type StreamEventType =
+  | "StreamCreated"
+  | "StreamWithdrawn"
+  | "StreamCancelled"
+  | "StreamCompleted"
+  | "StreamToppedUp";
+
+export interface StreamEvent {
+  type: StreamEventType;
+  streamId: string;
+  txHash: string;
+  ledger: number;
+  timestamp: number;
+  data: Record<string, unknown>;
+}
+
+export interface StreamSubscription {
+  unsubscribe(): void;
+}
+
+export interface StreamEventFilter {
+  streamId?: string;
+  sender?: string;
+  recipient?: string;
+}
+
+// ── Pagination types (#3) ────────────────────────────────────────────────────
+
+export interface PaginationParams {
+  limit?: number;
+  cursor?: string;
+}
+
+export interface PaginatedStreams {
+  streams: Stream[];
+  cursor: string | null;
+  hasMore: boolean;
+}
+
+// ── Multisig types (#16) ─────────────────────────────────────────────────────
+
+export interface MultisigSigner {
+  signTransaction(xdr: string, network: Network): Promise<string>;
+}
+
+// ── Webhook types (#22) ──────────────────────────────────────────────────────
+
+export interface WebhookConfig {
+  url: string;
+  headers?: Record<string, string>;
+  retries?: number;
+  retryDelayMs?: number;
+}
+
 /** A single payment stream as returned by the contract. */
 export interface Stream {
   /** Unique stream identifier. */

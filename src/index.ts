@@ -1,5 +1,7 @@
 export { SoroStreamClient } from "./SoroStreamClient.js";
-export { createFreighterAdapter, createKeypairAdapter, connectWallet } from "./wallet.js";
+export type { SoroStreamClientOptions } from "./SoroStreamClient.js";
+export { createFreighterAdapter, connectWallet, createMultisigAdapter } from "./wallet.js";
+export { WebhookForwarder } from "./webhook.js";
 export {
   toStroops,
   formatUSDC,
@@ -25,4 +27,12 @@ export type {
   BulkCreateResult,
   BatchWithdrawResult,
   TokenAggregate,
+  MultisigSigner,
+  StreamEvent,
+  StreamEventType,
+  StreamEventFilter,
+  StreamSubscription,
+  PaginationParams,
+  PaginatedStreams,
+  WebhookConfig,
 } from "./types.js";
