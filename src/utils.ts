@@ -1,5 +1,6 @@
 import { SoroStreamError } from "./errors.js";
 import type {
+  PriceFeedAdapter,
   Stream,
   BulkStreamRow,
   TokenAggregate,
@@ -8,6 +9,8 @@ import type {
   FormatUSDCOptions,
   StreamDrift,
   ReconcileStreamOptions,
+  BulkStreamRow,
+  TokenAggregate,
 } from "./types.js";
 
 /** A single point in a stream's payout forecast. */
@@ -69,11 +72,61 @@ export function formatUSDC(
 }
 
 /**
+ * Generic alias for {@link formatUSDC}. Formats a stroop amount for any token.
+ */
+export function formatToken(stroops: bigint, decimals: number = 7): string {
+  return formatUSDC(stroops, decimals);
+}
+
+/**
+ * Converts a token amount to a fiat display value using a price feed adapter.
+ *
+ * @param stroops - Amount in the smallest token unit.
+ * @param decimals - Number of decimal places the token uses.
+ * @param priceFeed - Adapter that provides token-to-fiat pricing.
+ * @param tokenAddress - The token contract address.
+ * @param displayCurrency - Target currency code (default "usd").
+ * @returns An object with both the token amount string and the fiat equivalent.
+ */
+export async function toFiatDisplay(
+  stroops: bigint,
+  decimals: number,
+  priceFeed: PriceFeedAdapter,
+  tokenAddress: string,
+  displayCurrency = "usd"
+): Promise<{ tokenAmount: string; fiatAmount: string }> {
+  const tokenAmount = formatToken(stroops, decimals);
+  const pricePerUnit = await priceFeed.getPrice(tokenAddress, displayCurrency);
+
+  const factor = 10n ** BigInt(decimals);
+  const whole = stroops / factor;
+  const remainder = stroops % factor;
+  const fractional = Number(remainder) / Number(factor);
+  const numericAmount = Number(whole) + fractional;
+  const fiatValue = numericAmount * pricePerUnit;
+
+  const fiatAmount = fiatValue.toFixed(2);
+  return { tokenAmount, fiatAmount };
+}
+
+/**
+ * Checks whether a string looks like a valid Stellar address (account or contract).
+ */
+export function isValidStellarAddress(address: string): boolean {
+  return (
+    typeof address === "string" && /^[GC][A-Z2-7]{55}$/.test(address)
+  );
+}
+
+/**
  * Calculates the per-second flow rate in stroops.
  * @param amount - Total amount in stroops.
  * @param durationSeconds - Duration in seconds.
  */
-export function calculateFlowRate(amount: bigint, durationSeconds: number): bigint {
+export function calculateFlowRate(
+  amount: bigint,
+  durationSeconds: number
+): bigint {
   if (durationSeconds <= 0) throw new SoroStreamError("Duration must be > 0");
   return amount / BigInt(durationSeconds);
 }
@@ -131,6 +184,9 @@ export function calculateVestingSchedule(
     effectiveClaimable = totalAmount;
   } else {
     const elapsed = currentTime - Math.max(cliffEndTime, stream.startTime);
+    const elapsed =
+      Math.min(currentTime, stream.endTime) -
+      Math.max(cliffEndTime, stream.startTime);
     effectiveClaimable = stream.flowRate * BigInt(Math.max(0, elapsed));
     if (currentTime >= stream.endTime) effectiveClaimable = totalAmount;
   }
@@ -355,7 +411,8 @@ export function aggregateStreamsByToken(streams: Stream[]): TokenAggregate[] {
     existing.streamCount += 1;
     existing.deposited += s.deposit;
     existing.claimable += claimableNow(s);
-    existing.claimedSoFar += s.deposit - s.flowRate * BigInt(s.endTime - s.lastWithdrawTime);
+    existing.claimedSoFar +=
+      s.deposit - s.flowRate * BigInt(s.endTime - s.lastWithdrawTime);
     map.set(s.token, existing);
   }
 
@@ -383,7 +440,8 @@ export function aggregateStreamsByToken(streams: Stream[]): TokenAggregate[] {
  */
 export function parseCsvStreamRows(csv: string): BulkStreamRow[] {
   const lines = csv.trim().split(/\r?\n/);
-  if (lines.length < 2) throw new Error("CSV must have a header row and at least one data row");
+  if (lines.length < 2)
+    throw new Error("CSV must have a header row and at least one data row");
 
   const header = lines[0]!.toLowerCase().trim();
   const cols = header.split(",").map((c) => c.trim());
@@ -394,7 +452,8 @@ export function parseCsvStreamRows(csv: string): BulkStreamRow[] {
 
   if (recipientIdx === -1) throw new Error("CSV missing 'recipient' column");
   if (amountIdx === -1) throw new Error("CSV missing 'amount' column");
-  if (durationIdx === -1) throw new Error("CSV missing 'durationSeconds' column");
+  if (durationIdx === -1)
+    throw new Error("CSV missing 'durationSeconds' column");
 
   const rows: BulkStreamRow[] = [];
 

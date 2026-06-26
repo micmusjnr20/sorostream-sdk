@@ -15,6 +15,9 @@ export { WebhookForwarder } from "./webhook.js";
 export {
   toStroops,
   formatUSDC,
+  formatToken,
+  toFiatDisplay,
+  isValidStellarAddress,
   calculateFlowRate,
   timeUntilStreamEnd,
   claimableNow,
@@ -30,6 +33,21 @@ export { CircuitBreaker } from "./circuitBreaker.js";
 export { withRetry } from "./retry.js";
 export type { CircuitState } from "./circuitBreaker.js";
 export type { RetryOptions } from "./retry.js";
+export type { CircuitState, CircuitBreakerOptions } from "./circuitBreaker.js";
+export { createContractEncoder } from "./contractEncoders.js";
+export type { ContractCallEncoder } from "./contractEncoders.js";
+export { createSimplePriceFeed } from "./priceFeed.js";
+export type { SimplePriceFeedOptions } from "./priceFeed.js";
+export {
+  SoroStreamError,
+  InsufficientAmountError,
+  StreamNotFoundError,
+  StreamNotActiveError,
+  TransactionFailedError,
+  InvalidAddressError,
+  AccountNotFoundError,
+  InsufficientBalanceError,
+} from "./errors.js";
 export type {
   Stream,
   StreamStatus,
@@ -62,4 +80,8 @@ export type {
   StreamDrift,
   ReconcileStreamOptions,
   PasskeyAdapterConfig,
+  PriceFeedAdapter,
+  FeeBumpOptions,
+  WriteOptions,
+  ContractVersion,
 } from "./types.js";

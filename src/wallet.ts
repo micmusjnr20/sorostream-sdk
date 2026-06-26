@@ -131,38 +131,6 @@ export async function connectWallet(): Promise<string> {
 }
 
 /**
- * Creates a WalletAdapter for a multi-sig Stellar account.
- *
- * The adapter collects signatures from each signer and combines them into
- * a single transaction envelope before submission. This works with Soroban's
- * `require_auth()` calls, which handle classic multisig accounts transparently
- * through the `Address` type.
- *
- * @param config.address - The multisig source account address.
- * @param config.signers - Array of signers that each independently sign the tx.
- * @param config.threshold - Optional minimum number of signatures required
- *   (defaults to `signers.length`, i.e. all must sign).
- *
- * @example
- * ```ts
- * const adapter = await createMultisigAdapter({
- *   address: "GCA...MULTISIG_ADDRESS",
- *   signers: [
- *     await createFreighterAdapter(),
- *     {
- *       async signTransaction(xdr, network) {
- *         const keypair = Keypair.fromSecret(process.env.SIGNER_2_SECRET!);
- *         const tx = TransactionBuilder.fromXDR(xdr, Networks.TESTNET);
- *         tx.sign(keypair);
- *         return tx.toEnvelope().toXDR("base64");
- *       },
- *     },
- *   ],
- *   threshold: 2,
- * });
- * ```
- */
-/**
  * Creates a {@link WalletAdapter} that presents the recipient's address to the
  * contract but signs transactions with a separate claim-bot key.
  *
@@ -172,7 +140,9 @@ export async function connectWallet(): Promise<string> {
  * This enables automated claiming daemons that never hold the recipient's primary
  * secret key. See {@link ClaimDelegateConfig} for the full setup guide.
  */
-export function createClaimDelegateAdapter(config: ClaimDelegateConfig): WalletAdapter {
+export function createClaimDelegateAdapter(
+  config: ClaimDelegateConfig
+): WalletAdapter {
   return {
     async isConnected(): Promise<boolean> {
       return true;
@@ -188,6 +158,17 @@ export function createClaimDelegateAdapter(config: ClaimDelegateConfig): WalletA
   };
 }
 
+/**
+ * Creates a WalletAdapter for a multi-sig Stellar account.
+ *
+ * The adapter collects signatures from each signer and combines them into
+ * a single transaction envelope before submission.
+ *
+ * @param config.address - The multisig source account address.
+ * @param config.signers - Array of signers that each independently sign the tx.
+ * @param config.threshold - Optional minimum number of signatures required
+ *   (defaults to `signers.length`, i.e. all must sign).
+ */
 export async function createMultisigAdapter(config: {
   address: string;
   signers: MultisigSigner[];
@@ -218,7 +199,9 @@ export async function createMultisigAdapter(config: {
         const tx = TransactionBuilder.fromXDR(signedXdr, passphrase);
 
         for (const sig of tx.signatures) {
-          const key = sig.hint().toString("base64") + sig.signature().toString("base64");
+          const key =
+            sig.hint().toString("base64") +
+            sig.signature().toString("base64");
           if (!seen.has(key)) {
             seen.add(key);
             if (!combined) {
