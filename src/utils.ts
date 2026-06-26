@@ -5,6 +5,14 @@ import type {
 } from "./types.js";
 import type { Stream, BulkStreamRow, TokenAggregate } from "./types.js";
 
+/** A single point in a stream's payout forecast. */
+export interface PayoutSchedulePoint {
+  /** Unix timestamp (seconds) for this sample. */
+  timestamp: number;
+  /** Cumulative tokens claimable from stream start up to `timestamp`, in stroops. */
+  cumulativeClaimable: bigint;
+}
+
 const STROOP_FACTOR = 10_000_000n;
 
 /**

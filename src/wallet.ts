@@ -3,6 +3,50 @@ import { Keypair, TransactionBuilder } from "@stellar/stellar-sdk";
 import { TransactionBuilder } from "@stellar/stellar-sdk";
 import type { WalletAdapter, Network, MultisigSigner } from "./types.js";
 
+/**
+ * Configuration for a claim-delegation adapter.
+ *
+ * The pattern lets an automated "claim bot" key call `withdraw` on behalf of the
+ * recipient without ever holding the recipient's primary key:
+ *
+ * 1. On-chain: add the bot key as a co-signer on the recipient's Stellar account
+ *    with a weight that meets the low-security threshold (e.g. weight 1 on a 1-of-N
+ *    multisig). The primary key retains sole control over high-security operations.
+ * 2. In the SDK: pass the recipient address as `recipientAddress` and the bot's
+ *    {@link MultisigSigner} as `claimBotSigner`.
+ *
+ * The resulting adapter always presents `recipientAddress` to `getPublicKey()`
+ * (so `withdraw` receives the correct recipient auth), but the transaction envelope
+ * is signed exclusively by the claim bot key.
+ *
+ * @example
+ * ```ts
+ * // Bot key loaded from env — never has custody of the recipient address.
+ * const botSigner: MultisigSigner = {
+ *   async signTransaction(xdr, network) {
+ *     const kp = Keypair.fromSecret(process.env.CLAIM_BOT_SECRET!);
+ *     const tx = TransactionBuilder.fromXDR(xdr, Networks.TESTNET);
+ *     tx.sign(kp);
+ *     return tx.toEnvelope().toXDR("base64");
+ *   },
+ * };
+ *
+ * const adapter = createClaimDelegateAdapter({
+ *   recipientAddress: "GRECIPI...",
+ *   claimBotSigner: botSigner,
+ * });
+ *
+ * const client = new SoroStreamClient({ network: "testnet", contractId, walletAdapter: adapter });
+ * await client.withdraw({ streamId });
+ * ```
+ */
+export interface ClaimDelegateConfig {
+  /** The actual recipient address (passed to `require_auth` on-chain). */
+  recipientAddress: string;
+  /** A signer representing the claim bot key. */
+  claimBotSigner: MultisigSigner;
+}
+
 const NETWORK_PASSPHRASES: Record<Network, string> = {
   mainnet: "Public Global Stellar Network ; September 2015",
   testnet: "Test SDF Network ; September 2015",
@@ -120,6 +164,32 @@ export async function connectWallet(): Promise<string> {
  * });
  * ```
  */
+/**
+ * Creates a {@link WalletAdapter} that presents the recipient's address to the
+ * contract but signs transactions with a separate claim-bot key.
+ *
+ * The bot key must be a co-signer on the recipient's Stellar account (classic
+ * multisig) so that Soroban's `require_auth` accepts its signature for `withdraw`.
+ *
+ * This enables automated claiming daemons that never hold the recipient's primary
+ * secret key. See {@link ClaimDelegateConfig} for the full setup guide.
+ */
+export function createClaimDelegateAdapter(config: ClaimDelegateConfig): WalletAdapter {
+  return {
+    async isConnected(): Promise<boolean> {
+      return true;
+    },
+
+    async getPublicKey(): Promise<string> {
+      return config.recipientAddress;
+    },
+
+    async signTransaction(xdr: string, network: Network): Promise<string> {
+      return config.claimBotSigner.signTransaction(xdr, network);
+    },
+  };
+}
+
 export async function createMultisigAdapter(config: {
   address: string;
   signers: MultisigSigner[];
