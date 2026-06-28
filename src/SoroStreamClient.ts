@@ -12,6 +12,10 @@ import {
 } from "@stellar/stellar-sdk";
 import { EventPoller } from "./events.js";
 import { isValidStellarAddress } from "./utils.js";
+import { createContractEncoder } from "./contractEncoders.js";
+import type { ContractCallEncoder } from "./contractEncoders.js";
+import { CircuitBreaker } from "./circuitBreaker.js";
+import type { CircuitBreakerOptions } from "./circuitBreaker.js";
 import {
   TransactionFailedError,
   StreamNotFoundError,
@@ -34,8 +38,12 @@ import type {
   Stream,
   StreamEvent,
   StreamEventFilter,
+  StreamEventType,
   StreamSubscription,
   TopUpParams,
+  TransferStreamParams,
+  PauseStreamParams,
+  ResumeStreamParams,
   UpdateFlowRateParams,
   SetOperatorParams,
   OperatorTopUpParams,
@@ -47,7 +55,7 @@ import type {
   ContractVersion,
   FeeBumpOptions,
 } from "./types.js";
-import type { RetryOptions } from "./retry.js";
+import { withRetry, type RetryOptions } from "./retry.js";
 
 const RPC_URLS: Record<Network, string> = {
   mainnet: "https://soroban.stellar.org",
@@ -77,6 +85,8 @@ export interface SoroStreamClientOptions {
   txTimeoutMs?: number;
   /** Retry policy for read methods (getStream, getClaimable, etc.). */
   readRetry?: RetryOptions;
+  /** Retry policy for transaction submission RPC calls (getAccount, prepareTransaction, sendTransaction). */
+  submitRetry?: RetryOptions;
   /** Optional price-feed adapter for token-to-fiat display conversion. */
   priceFeed?: PriceFeedAdapter;
   /** Contract version to use for call encoding (default: "v1"). */
@@ -100,6 +110,7 @@ function scValToStream(val: xdr.ScVal): Stream {
     lastWithdrawTime: Number(raw["last_withdraw_time"]),
     status: raw["status"] as Stream["status"],
     autoRenew: Boolean(raw["auto_renew"]),
+    ...(raw["paused_at"] != null ? { pausedAt: Number(raw["paused_at"]) } : {}),
   };
 }
 
@@ -125,6 +136,7 @@ export class SoroStreamClient {
   private readonly walletAdapter: WalletAdapter;
   private readonly txTimeoutMs: number;
   private readonly readRetry: RetryOptions;
+  private readonly submitRetry: RetryOptions;
   private readonly encoder: ContractCallEncoder;
   private readonly defaultFeeBump: FeeBumpOptions | null = null;
   private readonly priceFeed: PriceFeedAdapter | null = null;
@@ -143,6 +155,7 @@ export class SoroStreamClient {
       ? new CircuitBreaker(options.circuitBreaker)
       : null;
     this.readRetry = options.readRetry ?? {};
+    this.submitRetry = options.submitRetry ?? {};
     this.encoder = createContractEncoder(this.contract, options.contractVersion ?? "v1");
     this.defaultFeeBump = options.feeBump ?? null;
     this.priceFeed = options.priceFeed ?? null;
@@ -158,7 +171,11 @@ export class SoroStreamClient {
     feeBumpOpts?: FeeBumpOptions
   ): Promise<string> {
     const publicKey = await this.walletAdapter.getPublicKey();
-    const account = await this.withBreaker(() => this.server.getAccount(publicKey));
+
+    const account = await withRetry(
+      () => this.withBreaker(() => this.server.getAccount(publicKey)),
+      { ...this.submitRetry, signal }
+    );
 
     const tx = new TransactionBuilder(account, {
       fee: BASE_FEE,
@@ -168,18 +185,23 @@ export class SoroStreamClient {
       .setTimeout(30)
       .build();
 
-    const preparedTx = await this.withBreaker(() =>
-      this.server.prepareTransaction(tx)
+    const preparedTx = await withRetry(
+      () => this.withBreaker(() => this.server.prepareTransaction(tx)),
+      { ...this.submitRetry, signal }
     );
+
     const signedXdr = await this.walletAdapter.signTransaction(
       preparedTx.toXDR(),
       this.network
     );
 
-    const result = await this.withBreaker(() =>
-      this.server.sendTransaction(
-        TransactionBuilder.fromXDR(signedXdr, NETWORK_PASSPHRASES[this.network])
-      )
+    const result = await withRetry(
+      () => this.withBreaker(() =>
+        this.server.sendTransaction(
+          TransactionBuilder.fromXDR(signedXdr, NETWORK_PASSPHRASES[this.network])
+        )
+      ),
+      { ...this.submitRetry, signal }
     );
 
     if (result.status === "ERROR") {
@@ -223,7 +245,11 @@ export class SoroStreamClient {
 
   private async buildAndSubmitBatch(operations: xdr.Operation[]): Promise<string> {
     const publicKey = await this.walletAdapter.getPublicKey();
-    const account = await this.server.getAccount(publicKey);
+
+    const account = await withRetry(
+      () => this.server.getAccount(publicKey),
+      this.submitRetry
+    );
 
     let builder = new TransactionBuilder(account, {
       fee: BASE_FEE,
@@ -234,14 +260,21 @@ export class SoroStreamClient {
     }
     const tx = builder.setTimeout(30).build();
 
-    const preparedTx = await this.server.prepareTransaction(tx);
+    const preparedTx = await withRetry(
+      () => this.server.prepareTransaction(tx),
+      this.submitRetry
+    );
+
     const signedXdr = await this.walletAdapter.signTransaction(
       preparedTx.toXDR(),
       this.network
     );
 
-    const result = await this.server.sendTransaction(
-      TransactionBuilder.fromXDR(signedXdr, NETWORK_PASSPHRASES[this.network])
+    const result = await withRetry(
+      () => this.server.sendTransaction(
+        TransactionBuilder.fromXDR(signedXdr, NETWORK_PASSPHRASES[this.network])
+      ),
+      this.submitRetry
     );
 
     if (result.status === "ERROR") {
@@ -493,13 +526,6 @@ export class SoroStreamClient {
   }
 
   /**
-   * Executes a batch of operations in a single transaction.
-   */
-  async executeBatch(operations: xdr.Operation[]): Promise<string> {
-    return this.buildAndSubmitBatch(operations);
-  }
-
-  /**
    * Cancels multiple streams in batches.
    */
   async batchCancel(
@@ -583,6 +609,59 @@ export class SoroStreamClient {
     if (params.amount <= 0n) throw new InsufficientAmountError();
     const operator = await this.walletAdapter.getPublicKey();
     const operation = this.encoder.operatorTopUp(params.streamId, operator, params.amount);
+    const feeBump = this.resolveFeeBump(options?.feeBump);
+    const txHash = await this.buildAndSubmit(operation, signal, feeBump);
+    return { txHash };
+  }
+
+  /**
+   * Transfers ownership of a stream to a new recipient address mid-flight.
+   * Only the sender can transfer ownership.
+   */
+  async transferStream(
+    params: TransferStreamParams,
+    signal?: AbortSignal,
+    options?: WriteOptions
+  ): Promise<{ txHash: string }> {
+    if (!isValidStellarAddress(params.newRecipient)) {
+      throw new InvalidAddressError(params.newRecipient);
+    }
+    const sender = await this.walletAdapter.getPublicKey();
+    const operation = this.encoder.transferStream(
+      params.streamId,
+      sender,
+      params.newRecipient
+    );
+    const feeBump = this.resolveFeeBump(options?.feeBump);
+    const txHash = await this.buildAndSubmit(operation, signal, feeBump);
+    return { txHash };
+  }
+
+  /**
+   * Pauses an active stream. While paused, no new claimable tokens accumulate.
+   */
+  async pause(
+    params: PauseStreamParams,
+    signal?: AbortSignal,
+    options?: WriteOptions
+  ): Promise<{ txHash: string }> {
+    const sender = await this.walletAdapter.getPublicKey();
+    const operation = this.encoder.pauseStream(params.streamId, sender);
+    const feeBump = this.resolveFeeBump(options?.feeBump);
+    const txHash = await this.buildAndSubmit(operation, signal, feeBump);
+    return { txHash };
+  }
+
+  /**
+   * Resumes a previously paused stream. Claimable tokens will again accumulate.
+   */
+  async resume(
+    params: ResumeStreamParams,
+    signal?: AbortSignal,
+    options?: WriteOptions
+  ): Promise<{ txHash: string }> {
+    const sender = await this.walletAdapter.getPublicKey();
+    const operation = this.encoder.resumeStream(params.streamId, sender);
     const feeBump = this.resolveFeeBump(options?.feeBump);
     const txHash = await this.buildAndSubmit(operation, signal, feeBump);
     return { txHash };
@@ -698,6 +777,77 @@ export class SoroStreamClient {
       },
       callback,
     });
+  }
+
+  /**
+   * Subscribe to a specific stream lifecycle event type.
+   *
+   * @example
+   * ```ts
+   * const sub = client.on("StreamCreated", (event) => {
+   *   console.log("Stream created:", event.streamId);
+   * });
+   * // later: sub.unsubscribe();
+   * ```
+   */
+  on(
+    eventType: StreamEventType,
+    callback: (event: StreamEvent) => void
+  ): StreamSubscription {
+    return this.subscribeEvents({}, (event) => {
+      if (event.type === eventType) {
+        callback(event);
+      }
+    });
+  }
+
+  /**
+   * Shorthand for subscribing to stream-created events.
+   */
+  onStreamCreated(callback: (event: StreamEvent) => void): StreamSubscription {
+    return this.on("StreamCreated", callback);
+  }
+
+  /**
+   * Shorthand for subscribing to stream-withdrawn events.
+   */
+  onStreamWithdrawn(callback: (event: StreamEvent) => void): StreamSubscription {
+    return this.on("StreamWithdrawn", callback);
+  }
+
+  /**
+   * Shorthand for subscribing to stream-topped-up events.
+   */
+  onStreamToppedUp(callback: (event: StreamEvent) => void): StreamSubscription {
+    return this.on("StreamToppedUp", callback);
+  }
+
+  /**
+   * Shorthand for subscribing to stream-cancelled events.
+   */
+  onStreamCancelled(callback: (event: StreamEvent) => void): StreamSubscription {
+    return this.on("StreamCancelled", callback);
+  }
+
+  /**
+   * Shorthand for subscribing to stream-transferred events.
+   */
+  onStreamTransferred(callback: (event: StreamEvent) => void): StreamSubscription {
+    return this.on("StreamTransferred", callback);
+  }
+
+  /**
+   * Shorthand for subscribing to stream-paused events.
+   */
+  onStreamPaused(callback: (event: StreamEvent) => void): StreamSubscription {
+    return this.on("StreamPaused", callback);
+  }
+
+  /**
+   * Shorthand for subscribing to stream-resumed events.
+   */
+  onStreamResumed(callback: (event: StreamEvent) => void): StreamSubscription {
+    return this.on("StreamResumed", callback);
   }
 
   // ── Read methods (with retry) ────────────────────────────────────────────────

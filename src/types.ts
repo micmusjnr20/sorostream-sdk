@@ -1,5 +1,5 @@
 /** Status of a payment stream. */
-export type StreamStatus = "Active" | "Cancelled" | "Completed";
+export type StreamStatus = "Active" | "Cancelled" | "Completed" | "Paused";
 
 // ── Event types (#1) ─────────────────────────────────────────────────────────
 
@@ -8,7 +8,10 @@ export type StreamEventType =
   | "StreamWithdrawn"
   | "StreamCancelled"
   | "StreamCompleted"
-  | "StreamToppedUp";
+  | "StreamToppedUp"
+  | "StreamPaused"
+  | "StreamResumed"
+  | "StreamTransferred";
 
 export interface StreamEvent {
   type: StreamEventType;
@@ -81,6 +84,8 @@ export interface Stream {
   status: StreamStatus;
   /** Whether the stream auto-renews on completion. */
   autoRenew: boolean;
+  /** Unix timestamp when the stream was paused (undefined if not paused). */
+  pausedAt?: number;
 }
 
 /** Parameters for creating a new stream. */
@@ -156,6 +161,22 @@ export interface SetOperatorParams {
 export interface OperatorTopUpParams {
   streamId: string;
   amount: bigint;
+}
+
+/** Parameters for transferring a stream to a new recipient. */
+export interface TransferStreamParams {
+  streamId: string;
+  newRecipient: string;
+}
+
+/** Parameters for pausing a stream. */
+export interface PauseStreamParams {
+  streamId: string;
+}
+
+/** Parameters for resuming a paused stream. */
+export interface ResumeStreamParams {
+  streamId: string;
 }
 
 /** A single milestone point in a vesting schedule. */
