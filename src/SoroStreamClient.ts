@@ -38,6 +38,7 @@ import type {
   Stream,
   StreamEvent,
   StreamEventFilter,
+  StreamEventType,
   StreamSubscription,
   TopUpParams,
   UpdateFlowRateParams,
@@ -719,6 +720,56 @@ export class SoroStreamClient {
       },
       callback,
     });
+  }
+
+  /**
+   * Subscribe to a specific stream lifecycle event type.
+   *
+   * @example
+   * ```ts
+   * const sub = client.on("StreamCreated", (event) => {
+   *   console.log("Stream created:", event.streamId);
+   * });
+   * // later: sub.unsubscribe();
+   * ```
+   */
+  on(
+    eventType: StreamEventType,
+    callback: (event: StreamEvent) => void
+  ): StreamSubscription {
+    return this.subscribeEvents({}, (event) => {
+      if (event.type === eventType) {
+        callback(event);
+      }
+    });
+  }
+
+  /**
+   * Shorthand for subscribing to stream-created events.
+   */
+  onStreamCreated(callback: (event: StreamEvent) => void): StreamSubscription {
+    return this.on("StreamCreated", callback);
+  }
+
+  /**
+   * Shorthand for subscribing to stream-withdrawn events.
+   */
+  onStreamWithdrawn(callback: (event: StreamEvent) => void): StreamSubscription {
+    return this.on("StreamWithdrawn", callback);
+  }
+
+  /**
+   * Shorthand for subscribing to stream-topped-up events.
+   */
+  onStreamToppedUp(callback: (event: StreamEvent) => void): StreamSubscription {
+    return this.on("StreamToppedUp", callback);
+  }
+
+  /**
+   * Shorthand for subscribing to stream-cancelled events.
+   */
+  onStreamCancelled(callback: (event: StreamEvent) => void): StreamSubscription {
+    return this.on("StreamCancelled", callback);
   }
 
   // ── Read methods (with retry) ────────────────────────────────────────────────
