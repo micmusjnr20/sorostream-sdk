@@ -8,7 +8,8 @@ export type StreamEventType =
   | "StreamWithdrawn"
   | "StreamCancelled"
   | "StreamCompleted"
-  | "StreamToppedUp";
+  | "StreamToppedUp"
+  | "StreamTransferred";
 
 export interface StreamEvent {
   type: StreamEventType;
@@ -156,6 +157,12 @@ export interface SetOperatorParams {
 export interface OperatorTopUpParams {
   streamId: string;
   amount: bigint;
+}
+
+/** Parameters for transferring a stream to a new recipient. */
+export interface TransferStreamParams {
+  streamId: string;
+  newRecipient: string;
 }
 
 /** A single milestone point in a vesting schedule. */

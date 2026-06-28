@@ -41,6 +41,7 @@ import type {
   StreamEventType,
   StreamSubscription,
   TopUpParams,
+  TransferStreamParams,
   UpdateFlowRateParams,
   SetOperatorParams,
   OperatorTopUpParams,
@@ -610,6 +611,29 @@ export class SoroStreamClient {
     return { txHash };
   }
 
+  /**
+   * Transfers ownership of a stream to a new recipient address mid-flight.
+   * Only the sender can transfer ownership.
+   */
+  async transferStream(
+    params: TransferStreamParams,
+    signal?: AbortSignal,
+    options?: WriteOptions
+  ): Promise<{ txHash: string }> {
+    if (!isValidStellarAddress(params.newRecipient)) {
+      throw new InvalidAddressError(params.newRecipient);
+    }
+    const sender = await this.walletAdapter.getPublicKey();
+    const operation = this.encoder.transferStream(
+      params.streamId,
+      sender,
+      params.newRecipient
+    );
+    const feeBump = this.resolveFeeBump(options?.feeBump);
+    const txHash = await this.buildAndSubmit(operation, signal, feeBump);
+    return { txHash };
+  }
+
   // ── Fee estimation ────────────────────────────────────────────────────────
 
   private async estimateOperationFee(
@@ -770,6 +794,13 @@ export class SoroStreamClient {
    */
   onStreamCancelled(callback: (event: StreamEvent) => void): StreamSubscription {
     return this.on("StreamCancelled", callback);
+  }
+
+  /**
+   * Shorthand for subscribing to stream-transferred events.
+   */
+  onStreamTransferred(callback: (event: StreamEvent) => void): StreamSubscription {
+    return this.on("StreamTransferred", callback);
   }
 
   // ── Read methods (with retry) ────────────────────────────────────────────────

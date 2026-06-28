@@ -32,6 +32,7 @@ import type {
   StreamEventFilter,
   StreamSubscription,
   TopUpParams,
+  TransferStreamParams,
   UpdateFlowRateParams,
   OperatorTopUpParams,
   WithdrawParams,
@@ -312,6 +313,30 @@ export class MockSoroStreamClient {
     });
 
     return { txHash: `mock-tx-op-topup-${params.streamId}` };
+  }
+
+  async transferStream(
+    params: TransferStreamParams
+  ): Promise<{ txHash: string }> {
+    const stream = this.streams.get(params.streamId);
+    if (!stream) throw new Error(`Stream not found: ${params.streamId}`);
+    if (stream.status !== "Active") throw new Error("Stream is not active");
+
+    this.streams.set(params.streamId, {
+      ...stream,
+      recipient: params.newRecipient,
+    });
+
+    this.emit({
+      type: "StreamTransferred",
+      streamId: params.streamId,
+      txHash: `mock-tx-transfer-${params.streamId}`,
+      ledger: 0,
+      timestamp: nowSec(),
+      data: { newRecipient: params.newRecipient },
+    });
+
+    return { txHash: `mock-tx-transfer-${params.streamId}` };
   }
 
   async getStream(streamId: string): Promise<Stream> {

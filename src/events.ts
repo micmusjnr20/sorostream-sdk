@@ -7,6 +7,7 @@ const STREAM_EVENT_NAMES = new Set([
   "StreamCancelled",
   "StreamCompleted",
   "StreamToppedUp",
+  "StreamTransferred",
 ]);
 
 function isStreamEventType(value: string): value is StreamEventType {
