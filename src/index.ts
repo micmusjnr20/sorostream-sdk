@@ -58,6 +58,8 @@ export type {
   CancelStreamParams,
   TopUpParams,
   TransferStreamParams,
+  PauseStreamParams,
+  ResumeStreamParams,
   UpdateFlowRateParams,
   SetOperatorParams,
   OperatorTopUpParams,

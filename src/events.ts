@@ -7,6 +7,8 @@ const STREAM_EVENT_NAMES = new Set([
   "StreamCancelled",
   "StreamCompleted",
   "StreamToppedUp",
+  "StreamPaused",
+  "StreamResumed",
   "StreamTransferred",
 ]);
 

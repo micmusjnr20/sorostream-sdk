@@ -42,6 +42,8 @@ import type {
   StreamSubscription,
   TopUpParams,
   TransferStreamParams,
+  PauseStreamParams,
+  ResumeStreamParams,
   UpdateFlowRateParams,
   SetOperatorParams,
   OperatorTopUpParams,
@@ -108,6 +110,7 @@ function scValToStream(val: xdr.ScVal): Stream {
     lastWithdrawTime: Number(raw["last_withdraw_time"]),
     status: raw["status"] as Stream["status"],
     autoRenew: Boolean(raw["auto_renew"]),
+    ...(raw["paused_at"] != null ? { pausedAt: Number(raw["paused_at"]) } : {}),
   };
 }
 
@@ -634,6 +637,36 @@ export class SoroStreamClient {
     return { txHash };
   }
 
+  /**
+   * Pauses an active stream. While paused, no new claimable tokens accumulate.
+   */
+  async pause(
+    params: PauseStreamParams,
+    signal?: AbortSignal,
+    options?: WriteOptions
+  ): Promise<{ txHash: string }> {
+    const sender = await this.walletAdapter.getPublicKey();
+    const operation = this.encoder.pauseStream(params.streamId, sender);
+    const feeBump = this.resolveFeeBump(options?.feeBump);
+    const txHash = await this.buildAndSubmit(operation, signal, feeBump);
+    return { txHash };
+  }
+
+  /**
+   * Resumes a previously paused stream. Claimable tokens will again accumulate.
+   */
+  async resume(
+    params: ResumeStreamParams,
+    signal?: AbortSignal,
+    options?: WriteOptions
+  ): Promise<{ txHash: string }> {
+    const sender = await this.walletAdapter.getPublicKey();
+    const operation = this.encoder.resumeStream(params.streamId, sender);
+    const feeBump = this.resolveFeeBump(options?.feeBump);
+    const txHash = await this.buildAndSubmit(operation, signal, feeBump);
+    return { txHash };
+  }
+
   // ── Fee estimation ────────────────────────────────────────────────────────
 
   private async estimateOperationFee(
@@ -801,6 +834,20 @@ export class SoroStreamClient {
    */
   onStreamTransferred(callback: (event: StreamEvent) => void): StreamSubscription {
     return this.on("StreamTransferred", callback);
+  }
+
+  /**
+   * Shorthand for subscribing to stream-paused events.
+   */
+  onStreamPaused(callback: (event: StreamEvent) => void): StreamSubscription {
+    return this.on("StreamPaused", callback);
+  }
+
+  /**
+   * Shorthand for subscribing to stream-resumed events.
+   */
+  onStreamResumed(callback: (event: StreamEvent) => void): StreamSubscription {
+    return this.on("StreamResumed", callback);
   }
 
   // ── Read methods (with retry) ────────────────────────────────────────────────
