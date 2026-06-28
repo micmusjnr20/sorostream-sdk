@@ -11,12 +11,7 @@ import {
   FeeBumpTransaction,
 } from "@stellar/stellar-sdk";
 import { EventPoller } from "./events.js";
-import { CircuitBreaker } from "./circuitBreaker.js";
-import type { CircuitBreakerOptions } from "./circuitBreaker.js";
-import { withRetry } from "./retry.js";
 import { isValidStellarAddress } from "./utils.js";
-import { createContractEncoder } from "./contractEncoders.js";
-import type { ContractCallEncoder } from "./contractEncoders.js";
 import {
   TransactionFailedError,
   StreamNotFoundError,
@@ -264,6 +259,11 @@ export class SoroStreamClient {
     }
 
     return result.hash;
+  }
+
+  /** Public wrapper for submitting a batch of operations in a single transaction. */
+  async executeBatch(operations: xdr.Operation[]): Promise<string> {
+    return this.buildAndSubmitBatch(operations);
   }
 
   private async simulateOp(
@@ -709,21 +709,12 @@ export class SoroStreamClient {
    * @param streamId - The stream ID to look up.
    */
   async getStream(streamId: string): Promise<Stream> {
-    const publicKey = await this.walletAdapter.getPublicKey();
-    const account = await this.withBreaker(() =>
-      this.server.getAccount(publicKey)
-    );
-    const result = await this.withBreaker(() =>
-      this.server.simulateTransaction(
-        new TransactionBuilder(account, {
-          fee: BASE_FEE,
-          networkPassphrase: NETWORK_PASSPHRASES[this.network],
-        })
-          .addOperation(
-            this.contract.call(
-              "get_stream",
-              nativeToScVal(BigInt(streamId), { type: "u64" })
-            )
+    const result = await withRetry(
+      () =>
+        this.simulateOp(
+          this.contract.call(
+            "get_stream",
+            nativeToScVal(BigInt(streamId), { type: "u64" })
           )
           .build()
       )
@@ -816,8 +807,7 @@ export class SoroStreamClient {
 
     if (!pagination) return streams;
 
-    const p = pagination;
-    const limit = p.limit ?? 20;
+    const limit = pagination.limit ?? 20;
     const last = streams[streams.length - 1];
     return {
       streams,
@@ -876,8 +866,7 @@ export class SoroStreamClient {
 
     if (!pagination) return streams;
 
-    const p = pagination;
-    const limit = p.limit ?? 20;
+    const limit = pagination.limit ?? 20;
     const last = streams[streams.length - 1];
     return {
       streams,
